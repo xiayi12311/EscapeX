@@ -16,7 +16,7 @@ GameModePath=/EscapeX/Asset/Blueprint/UGCGameMode.UGCGameMode_C
 [FeatureFlags]
 bOpenItemEditorV1=0
 bOpenSkillEditorV1=0
-bOpenParticleEditorV1=0
+bOpenParticleEditorV1=1
 bExpandItemQuotaTo4000=0
 
 [MatchSetting]
