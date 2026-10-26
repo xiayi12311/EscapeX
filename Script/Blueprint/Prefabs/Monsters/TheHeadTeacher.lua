@@ -1,4 +1,5 @@
 ---@class TheHeadTeacher_C:BP_UGC_GenericMobPawn_Base_C
+---@field SpotLight USpotLightComponent
 ---@field RedLightMesh UStaticMeshComponent
 ---@field HitBox UCapsuleComponent
 ---@field HTViewDistance float
@@ -6,6 +7,7 @@
 ---@field HTCatchDistance float
 ---@field HTPatrolSpeed float
 ---@field HTChaseSpeed float
+---@field HTDamage float
 ---@field HTDetectionInterval float
 ---@field HTMoveInterval float
 ---@field HTWaypointRadius float
