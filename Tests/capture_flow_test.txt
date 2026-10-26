@@ -36,6 +36,7 @@ UGCGameSystem={
     -- the service's authoritative clock; the harness drives it in fake seconds
     GetTimeSeconds=function() return clock end,
     GetGameMode=function() return gm end,
+    GetGameState=function() return {GetServerWorldTimeSeconds=function() return clock end} end,
 }
 UGCPlayerStateSystem={IsAlive=function(k) return alive[k]~=false end,
     IsExit=function(k) return exited[k]==true end}
@@ -138,6 +139,9 @@ end
 local function newGameMode()
     local g={}
     function g:HasAuthority() return true end
+    function g:OnPlayerCaptured(key,sid)
+        self.captureNotifications=(self.captureNotifications or 0)+1
+    end
     return g
 end
 
@@ -658,8 +662,48 @@ check('a failed control lock rolls back its acquired references and refuses capt
     local ok,reason=Service.StartCapture(g,newMonster(),p)
     UGCGameplayTagSystem.IsValidTag=function() return true end
     assert(not ok and reason=='CONTROL_LOCK_FAILED')
+    assert(not g.captureNotifications, 'failed grabs must not reset desk rounds')
     assert(not Service.IsBusy(g,1))
     for _,count in pairs(p.disabled) do assert(count==0) end
+end)
+
+check('confirmed capture resets all desk states and count exactly once', function()
+    local g=freshWorld()
+    assert(Service.RegisterPost(g,newPost('DESK_RESET_POST',400,0,0)))
+    local Desk=requireModule('Script.Gameplay.Desk.DeskSearchService')
+    local Mode=requireModule('Script.Blueprint.UGCGameMode')
+    g.ResetAllDesks=Mode.ResetAllDesks
+    g.ResetOpenedCount=Mode.ResetOpenedCount
+    g.OnPlayerCaptured=function(self,key,sid)
+        self.captureNotifications=(self.captureNotifications or 0)+1
+        return Mode.OnPlayerCaptured(self,key,sid)
+    end
+    Desk.Setup(g)
+    local p=playerPawn(1)
+    local mate=playerPawn(2)
+    local function desk(id)
+        local a={SearchArea={K2_GetComponentLocation=function() return vec(0,0,0) end}}
+        assert(Desk.Register(g,a,id))
+        return a
+    end
+    local opened=desk('OPENED')
+    local searching=desk('SEARCHING')
+    assert(Desk.StartSearch(g,opened,p.controller))
+    clock=clock+3.1; g.DeskSearchManager:Update(); g.DeskSearchManager:FlushEvents()
+    clock=clock+1.1; g.DeskSearchManager:Update(); g.DeskSearchManager:FlushEvents()
+    assert(opened.DeskState.State=='Opened' and Desk.GetOpenedCount(g)==1)
+    assert(Desk.StartSearch(g,searching,mate.controller))
+    local monster=newMonster()
+    assert(Service.StartCapture(g,monster,p))
+    assert(g.captureNotifications==1)
+    assert(Desk.GetOpenedCount(g)==0)
+    assert(opened.DeskState.State=='Closed' and opened.DeskState.ResetVersion==2)
+    assert(searching.DeskState.State=='Closed' and searching.DeskState.ResetVersion==2)
+    assert(next(g.DeskSearchManager.players)==nil)
+    assert(Desk.StartSearch(g,searching,mate.controller))
+    assert(not Service.StartCapture(g,monster,p))
+    assert(g.captureNotifications==1 and searching.DeskState.State=='Searching',
+        'duplicate capture must not reset another active desk search')
 end)
 
 check('native button display checks work on the client from replicated state', function()

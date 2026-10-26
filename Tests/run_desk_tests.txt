@@ -1,0 +1,15 @@
+"""Server state-machine tests; no claim of UE replication or asset coverage."""
+from pathlib import Path
+import sys
+
+root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(root / '.test-deps'))
+from lupa.lua51 import LuaRuntime
+
+lua = LuaRuntime(unpack_returned_tuples=True)
+lua.globals().TEST_ROOT = root.as_posix()
+for source in (root / 'Script').rglob('*.lua'):
+    lua.execute('assert(loadstring(...))', source.read_text(encoding='utf-8-sig'))
+lua.execute((root / 'Tests' / 'desk_search_test.txt').read_text(encoding='utf-8-sig'))
+lua.execute((root / 'Tests' / 'desk_service_test.txt').read_text(encoding='utf-8-sig'))
+lua.execute((root / 'Tests' / 'desk_presentation_test.txt').read_text(encoding='utf-8-sig'))

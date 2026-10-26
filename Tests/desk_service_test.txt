@@ -1,0 +1,76 @@
+local callbacks,removed={},{}
+local timerSerial,tips=0,0
+local now=0
+math.random=function() return 0 end
+local logs={}
+local pc={key=7}
+local pawn={K2_GetActorLocation=function() return {X=0,Y=0,Z=0} end}
+KismetSystemLibrary={IsValid=function(obj) return not obj.destroyed end}
+UGCPlayerStateSystem={IsAlive=function() return true end,IsExit=function() return false end}
+ugcprint=function(s) logs[#logs+1]=s end
+UGCGameSystem={
+    UGCRequire=function(name) return dofile(TEST_ROOT..'/'..name:gsub('%.','/')..'.lua') end,
+    GetServerTimeSec=function() return math.floor(now) end,
+    GetGameState=function() return {GetServerWorldTimeSeconds=function() return now end} end,
+    GetPlayerControllerByPlayerKey=function(key) if key==7 then return pc end end,
+    GetPlayerPawnByPlayerKey=function(key) if key==7 then return pawn end end,
+    GetPlayerKeyByPlayerController=function(p) return p.key end,
+    GetAllPlayerController=function() return {pc} end,
+}
+UGCWidgetManagerSystem={ShowTipsUIByServer=function(text,target) assert(target==pc); tips=tips+1 end}
+UGCTimerUtility={
+    CreateLuaTimer=function(interval,callback,loop,name)
+        assert(interval>0); timerSerial=timerSerial+1
+        name=name or ('effect'..timerSerial)
+        callbacks[name]=callback; return name
+    end,
+    RemoveLuaTimer=function(timer) removed[timer]=true; callbacks[timer]=nil end,
+}
+local service=dofile(TEST_ROOT..'/Script/Gameplay/Desk/DeskSearchService.lua')
+local gm={HasAuthority=function() return true end}
+local client={HasAuthority=function() return false end}
+service.Setup(client); assert(client.DeskSearchManager==nil)
+assert(not service.ResetAllDesks(client))
+service.Setup(gm); local first=gm.DeskSearchManager; service.Setup(gm)
+assert(gm.DeskSearchManager==first)
+-- Distance must use the actual interaction volume, even with an offset actor pivot.
+local a={K2_GetActorLocation=function() return {X=1000,Y=0,Z=0} end,
+    SearchArea={K2_GetComponentLocation=function() return {X=0,Y=0,Z=0} end}}
+assert(service.Register(gm,a,'A'))
+assert(a.DeskState.State=='Closed')
+-- Native AssignNew passes one FClick_Param, not separate PC/message arguments.
+local desk=dofile(TEST_ROOT..'/Script/Blueprint/Prefabs/Interactables/BP_SearchableDesk.lua')
+a.HasAuthority=function() return true end
+UGCGameSystem.GetGameMode=function() return gm end
+assert(desk.CheckDeskSearchNative(a,{PlayerController=pc,Message=''}))
+desk.OnClickDeskSearch(a,{PlayerController=pc,Message=''})
+assert(a.DeskState.State=='Searching')
+assert(not desk.CheckDeskSearchNative(a,{PlayerController=pc,Message=''}))
+now=2.99; callbacks['EscapeX.DeskSearch.Update']()
+assert(a.DeskState.State=='Searching' and service.GetOpenedCount(gm)==0)
+now=3; callbacks['EscapeX.DeskSearch.Update']()
+assert(a.DeskState.State=='Opening'); assert(service.GetOpenedCount(gm)==1)
+assert(service.ResetDesk(gm,a)); assert(a.DeskState.State=='Closed')
+assert(service.GetOpenedCount(gm)==1)
+assert(service.StartSearch(gm,a,pc))
+assert(service.ResetOpenedCount(gm)); assert(a.DeskState.State=='Searching')
+assert(service.ResetAllDesks(gm)); assert(a.DeskState.State=='Closed')
+assert(service.StartSearch(gm,a,pc)); assert(service.CancelPlayer(gm,pc,'DISCONNECTED'))
+assert(a.DeskState.State=='Closed' and gm.DeskSearchManager.players[7]==nil)
+-- Fixed note broadcast is delayed until reveal, and reset cancels it.
+gm.DeskSearchManager.TotalOpenedCount=4
+assert(service.StartSearch(gm,a,pc)); now=now+3; callbacks['EscapeX.DeskSearch.Update']()
+assert(a.DeskState.FinalOutcomeId=='NoteEvent_05' and tips==0)
+local effect=gm.DeskEffectTimers[a]; assert(effect and callbacks[effect])
+local stale=callbacks[effect]
+assert(service.ResetDesk(gm,a)); assert(removed[effect])
+stale(); assert(tips==0)
+gm.DeskSearchManager.TotalOpenedCount=9
+assert(service.StartSearch(gm,a,pc)); now=now+3; callbacks['EscapeX.DeskSearch.Update']()
+effect=gm.DeskEffectTimers[a]; assert(effect)
+callbacks[effect](); assert(tips==1)
+assert(service.Unregister(gm,a)); assert(not service.StartSearch(gm,a,pc))
+service.Shutdown(gm)
+assert(gm.DeskSearchManager==nil and gm.DeskSearchTimer==nil)
+assert(removed['EscapeX.DeskSearch.Update'])
+print('PASS: engine adapter server guards, timer lifecycle, snapshot publication and reset interfaces (mock)')

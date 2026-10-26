@@ -1,0 +1,62 @@
+local now,created,stops,destroyed=0,0,0,0
+local timers={}
+local serial=0
+local pc={}
+KismetSystemLibrary={IsValid=function(o) return not o.destroyed end}
+UGCGameSystem.GetServerTimeSec=function() return math.floor(now) end
+UGCGameSystem.GetGameState=function()
+    return {GetServerWorldTimeSeconds=function() return now end}
+end
+UGCGameSystem.GetLocalPlayerController=function() return pc end
+UGCGameSystem.GetPlayerKeyByPlayerController=function() return 7 end
+UGCTimerUtility.CreateLuaTimer=function(_,fn) serial=serial+1; timers[serial]=fn; return serial end
+UGCTimerUtility.RemoveLuaTimer=function(id) timers[id]=nil end
+local function component()
+    return {K2_SetRelativeLocation=function(self,pos) self.pos=pos end,
+        SetVisibility=function(self,v) self.visible=v end,
+        SetRelativeScale3D=function(self,s) self.scale=s end}
+end
+UE={LoadClass=function(path) return path end,LoadObject=function(path) return path end}
+LevelSequencePlayer={CreateLevelSequencePlayer=function()
+    created=created+1
+    return {Stop=function() stops=stops+1 end,Play=function() end,
+        SetPlaybackPosition=function(self,t) self.position=t end},
+        {UGCAddBinding=function(self,a,name) assert(name=='DeskSequenceAuthoring'); self.bound=a end,
+        K2_DestroyActor=function(self) self.destroyed=true; destroyed=destroyed+1 end}
+end}
+UGCObjectUtility={GetClassDefaultObject=function(cls)
+    assert(cls=='/Script/LevelSequence.LevelSequencePlayer')
+    return LevelSequencePlayer
+end}
+UGCWidgetUtility={CreateWidget=function()
+    local bar={SetPercent=function(self,p) self.percent=p end}
+    local label={SetText=function(self,t) self.text=t end}
+    return {AddToViewport=function(self) self.visible=true end,
+        RemoveFromParent=function(self) self.visible=false end,
+        GetWidgetFromName=function(_,name) if name=='SearchProgress' then return bar else return label end end}
+end}
+local P=dofile(TEST_ROOT..'/Script/Gameplay/Desk/DeskPresentation.lua')
+local a={Drawer=component(),DeskContent=component(),DeskState={State='Closed',ResetVersion=1,InteractionId=0,Revision=1}}
+P.Begin(a); assert(a.Drawer.pos.Y==0 and a.Drawer.pos.Z==0 and not a.DeskContent.visible and not a.DeskVisualTimer)
+assert(a.DeskContent.pos.Y==-0.8 and math.abs(a.DeskContent.pos.Z-57.85)<1e-6)
+a.DeskState={State='Searching',ResetVersion=1,InteractionId=1,Revision=2,SearchingPlayerId=7,SearchStartTime=0,SearchEndTime=3}
+now=1.5; P.Update(a)
+local ui=a.DeskProgressUI
+assert(ui.visible and ui:GetWidgetFromName('SearchProgress').percent==0.5)
+-- Emulate a replication layer changing fields in place.
+a.DeskState.State='Opening'; a.DeskState.Revision=3
+a.DeskState.OpenStartTime=1.5; a.DeskState.FinalOutcomeId='NoteEvent_05'
+P.Update(a); assert(created==1 and not ui.visible)
+assert(a.DeskSequenceActor.bound==a)
+now=2.4; P.Update(a); assert(a.DeskContent.visible and a.DeskContent.pos.Y==-18.8)
+-- 序列结束即落到打开姿态，不等 Opened 快照；重复停止保持幂等。
+now=2.7; P.Update(a); assert(a.Drawer.pos.Y==-18 and stops==1 and destroyed==1)
+a.DeskState={State='Closed',ResetVersion=2,InteractionId=1,Revision=4}
+P.Update(a); assert(stops==1 and destroyed==1 and not a.DeskContent.visible and not a.DeskVisualTimer)
+P.Apply(a,{State='Opening',ResetVersion=1,InteractionId=1,Revision=3,OpenStartTime=now})
+assert(created==1)
+local b={Drawer=component(),DeskContent=component(),DeskState={State='Opened',ResetVersion=1,InteractionId=1,Revision=5,FinalOutcomeId='NoteEvent_10'}}
+P.Begin(b); assert(b.Drawer.pos.Y==-18 and b.Drawer.pos.Z==0 and b.DeskContent.visible and created==1 and not b.DeskVisualTimer)
+assert(b.DeskContent.pos.Y==-18.8 and math.abs(b.DeskContent.pos.Z-57.85)<1e-6)
+P.End(a); P.End(b)
+print('PASS: presentation progress, sequence lifecycle, in-place snapshot changes, reset, stale state, late join (mock)')

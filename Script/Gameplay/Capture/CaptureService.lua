@@ -417,6 +417,9 @@ function Service.StartCapture(gm, monster, target)
     if started and not m:GetSnapshot(sessionId) then
         return false, 'CONTROL_LOCK_FAILED'
     end
+    -- StartSession rejects duplicate/invalid grabs. Notify once, only after the
+    -- SessionStarted effects succeeded; later carry/bind/release stages do not reset.
+    if started then gm:OnPlayerCaptured(key, sessionId) end
     log((started and 'capture started player=' or 'capture refused player=') .. tostring(key)
         .. ' result=' .. tostring(sessionId))
     return started and true or false, sessionId
