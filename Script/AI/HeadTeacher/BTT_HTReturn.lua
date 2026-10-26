@@ -3,7 +3,6 @@ local T = {}
 function T:ReceiveExecuteAI(_,p)
     if not H.begin(self,p,"ReturnToRoute") then return end
     p.HTDetectionEnabled=false
-    H.releaseUnusedRigs(p,{})
     local bb=H.bb(p)
     H.traceEvent(string.format("return_enter seq=%s processed=%s lockBeforeClear=%s",
         tostring(bb:GetValueAsInt("ChaseSequenceId")), tostring(bb:GetValueAsInt("ProcessedSequenceId")),

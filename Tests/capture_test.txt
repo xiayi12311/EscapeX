@@ -1,0 +1,371 @@
+-- Offline rules for the capture/imprison state machine. No UE replication, no
+-- navigation, no attachment: those are covered by the PIE checklist in
+-- Docs/TheHeadTeacher_抓住囚禁_实现计划.md section 6.
+local Manager=dofile(TEST_ROOT..'/Script/Gameplay/Capture/CaptureManager.lua')
+local Config=dofile(TEST_ROOT..'/Script/Gameplay/Capture/CaptureConfig.lua')
+
+local now,dead,rescuerOK
+local emitted
+
+local function newManager()
+    emitted={}
+    return Manager.new({
+        now=function() return now end,
+        validatePlayer=function(key)
+            if dead[key] then return false,'PLAYER_DEAD' end
+            return true
+        end,
+        validateRescuer=function(post,key,radius)
+            if not rescuerOK[key] then return false,'RESCUER_TOO_FAR' end
+            return true
+        end,
+        emit=function(data,kind,reason,post,monster)
+            emitted[#emitted+1]={k=kind,r=reason,data=data,post=post,monster=monster}
+        end,
+        log=function() end,
+    },Config)
+end
+
+local sessionOptions={PickupDuration=0.6,PutDownDuration=0.6,EscortTimeout=20,
+    ImprisonDuration=15,StruggleInterval=0.15,EscortSpeed=300,ArriveRadius=120}
+local postOptions={StrugglePresses=3,RescueDuration=3,RescueRadius=200}
+
+local function kinds()
+    local list={}
+    for _,e in ipairs(emitted) do list[#list+1]=e.k end
+    return table.concat(list,',')
+end
+
+local function kindAt(kind)
+    local index,found
+    for i,e in ipairs(emitted) do if e.k==kind then index,found=i,e end end
+    return index,found                                          -- last match wins
+end
+
+now=0; dead={}; rescuerOK={}
+
+-- ---- registration ------------------------------------------------------------
+local m=newManager()
+local postA={}
+assert(m:RegisterPost(postA,'A',{Location={X=0,Y=0,Z=0}}))
+local postA2={}
+assert(m:RegisterPost(postA2,'A2',{Location={X=10,Y=0,Z=0}}))
+assert(m:RegisterPost({},'B2',{Location={X=100,Y=0,Z=0}}))
+assert((select(2,m:RegisterPost({},'A')))== 'DUPLICATE_POST')
+assert((select(2,m:RegisterPost(postA2,'A3')))=='DUPLICATE_POST')   -- same actor
+local ok,why=m:RegisterPost({},'C',{Location={X=0,Y=0}})
+assert(not ok and why=='POST_LOCATION_REQUIRED')
+ok,why=m:RegisterPost({},'D',{Location={X=0,Y=0,Z=0},RescueRadius=0})
+assert(not ok and why=='INVALID_RESCUE_RADIUS')
+ok,why=m:RegisterPost({},'E',{Location={X=0,Y=0,Z=0},StrugglePresses=1.5})
+assert(not ok and why=='INVALID_STRUGGLE_PRESSES')
+assert(m:PostCount()==3)
+assert(m:FindPost(postA2).id=='A2')
+assert(m:FindPost({})==nil)
+
+-- ---- nearest free post selection ---------------------------------------------
+local list=m:NearestFreePosts({X=9,Y=0,Z=0})
+assert(#list==3 and list[1].PostId=='A2')
+assert(list[1].Distance<list[2].Distance and list[2].Distance<list[3].Distance)
+assert(list[2].PostId=='A' and list[3].PostId=='B2')
+assert(list[1].Location.X==10)
+local limited=m:NearestFreePosts({X=0,Y=0,Z=0},1)
+assert(#limited==1)
+local empty,reason=m:NearestFreePosts('not a vector')
+assert(#empty==0 and reason=='INVALID_POSITION')
+-- equal distances fall back to the post id, so the choice is stable
+local tie=newManager()
+assert(tie:RegisterPost({},'Z',{Location={X=5,Y=0,Z=0}}))
+assert(tie:RegisterPost({},'Y',{Location={X=5,Y=0,Z=0}}))
+local eq=tie:NearestFreePosts({X=0,Y=0,Z=0})
+assert(#eq==2 and eq[1].PostId=='Y' and eq[2].PostId=='Z')
+
+-- ---- session guards -----------------------------------------------------------
+now=0; dead={}; rescuerOK={}
+m=newManager()
+assert(m:RegisterPost(postA,'A',{Location={X=0,Y=0,Z=0}}))
+assert(m:RegisterPost({},'B',{Location={X=1000,Y=0,Z=0}}))
+local monsterOne={}
+assert((select(2,m:StartSession(-1,monsterOne,sessionOptions,postOptions)))=='INVALID_PLAYER')
+assert((select(2,m:StartSession(1,nil,sessionOptions,postOptions)))=='INVALID_MONSTER')
+assert((select(2,m:StartSession(1,monsterOne,{PickupDuration=-1},postOptions)))
+    =='INVALID_CONFIG:PickupDuration')
+dead[1]=true
+assert((select(2,m:StartSession(1,monsterOne,sessionOptions,postOptions)))=='PLAYER_DEAD')
+dead[1]=nil
+local id
+ok,id=m:StartSession(1,monsterOne,sessionOptions,postOptions)
+assert(ok and id==1)
+assert((select(2,m:StartSession(1,{},sessionOptions,postOptions)))=='PLAYER_BUSY')
+assert((select(2,m:StartSession(2,monsterOne,sessionOptions,postOptions)))=='MONSTER_BUSY')
+assert(m:IsBusy(1) and m:BusyPlayerKeys()[1])
+local noPosts=newManager()
+assert((select(2,noPosts:StartSession(5,{},sessionOptions,postOptions)))=='NO_POST')
+
+-- ---- full phase timeline ------------------------------------------------------
+assert(m:GetSession(id).state=='Grabbing')
+now=0.3; m:Update(); assert(m:GetSession(id).state=='Grabbing')
+now=0.7; m:Update()
+local s=m:GetSession(id)
+assert(s.state=='Carrying' and s.deadline==0.7+20 and not s.arrived)
+assert((select(2,m:ClaimPost(id,'UNKNOWN')))== 'UNKNOWN_POST')
+assert(m:ClaimPost(id,'A'))
+local afterClaim=m:NearestFreePosts({X=0,Y=0,Z=0})
+assert(#afterClaim==1 and afterClaim[1].PostId=='B')      -- A is occupied
+assert(m:ClaimPost(id,'A'))                               -- own claim is idempotent
+local busy=newManager()
+assert(busy:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+local firstId,secondId
+ok,firstId=busy:StartSession(1,{},sessionOptions,postOptions)
+assert(ok and busy:ClaimPost(firstId,'A'))
+ok,secondId=busy:StartSession(2,{},sessionOptions,postOptions)
+assert(ok and (select(2,busy:ClaimPost(secondId,'A')))== 'POST_BUSY')
+assert(busy:CancelPlayer(1,'CANCELLED'))
+assert(busy:ClaimPost(secondId,'A'))                      -- freed post is claimable
+m:ReleasePost(id)
+assert((select(2,m:MarkArrived(id)))=='NO_POST_CLAIMED')
+assert(m:ClaimPost(id,'B'))
+assert(#m:NearestFreePosts({X=0,Y=0,Z=0})==1)
+assert(m:ClaimPost(id,'A'))                               -- re-claim releases B
+assert(#m:NearestFreePosts({X=0,Y=0,Z=0})==1)
+assert(m:MarkArrived(id) and m:MarkArrived(id))           -- idempotent
+now=1.0; m:Update(); assert(m:GetSession(id).state=='PuttingDown')
+now=1.2; m:Update(); assert(m:GetSession(id).state=='PuttingDown')
+now=1.7; m:Update()
+s=m:GetSession(id)
+assert(s.state=='Imprisoned' and s.unlockAt==1.7+15 and s.struggle==0 and s.ready==false)
+assert((select(2,m:ClaimPost(id,'A')))== 'WRONG_STATE')
+assert((select(2,m:MarkArrived(id)))=='WRONG_STATE')
+assert((select(2,m:Release(999)))=='UNKNOWN_SESSION')
+
+-- ---- escort timeout ----------------------------------------------------------
+now=0; m=newManager()
+assert(m:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+local idT
+ok,idT=m:StartSession(2,{},sessionOptions,postOptions)
+assert(ok)
+now=0.7; m:Update(); assert(m:ClaimPost(idT,'A'))
+now=20.6; m:Update(); assert(m:GetSession(idT))           -- deadline is 20.7
+now=20.8; m:Update()
+assert(not m:GetSession(idT))
+local _,rel=kindAt('Released')
+assert(rel and rel.r=='ESCORT_TIMEOUT')
+assert(#m:NearestFreePosts({X=0,Y=0,Z=0})==1)             -- post freed again
+
+-- carrying with no claim at all reports NO_POST
+emitted={}
+now=0
+local idN
+ok,idN=m:StartSession(3,{},sessionOptions,postOptions)
+assert(ok)
+now=0.7; m:Update(); assert(m:GetSession(idN).state=='Carrying')
+now=20.8; m:Update()                                        -- never claims a post
+local _,relN=kindAt('Released')
+assert(relN and relN.r=='NO_POST')
+now=0
+
+-- ---- no auto release after the 15s gate --------------------------------------
+now=0; m=newManager()
+assert(m:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+local idP
+ok,idP=m:StartSession(1,{},sessionOptions,postOptions)
+assert(ok)
+now=0.7; m:Update(); assert(m:ClaimPost(idP,'A'))
+m:MarkArrived(idP); now=1; m:Update(); now=2; m:Update()
+assert(m:GetSession(idP).state=='Imprisoned')
+for _,t in ipairs({3,10,16,17,30,120}) do now=t; m:Update() end
+assert(m:GetSession(idP) and m:GetSession(idP).state=='Imprisoned')
+assert(m:GetSession(idP).ready==true)
+
+-- ---- struggle ----------------------------------------------------------------
+now=0; m=newManager()
+assert(m:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+local idS
+ok,idS=m:StartSession(7,{},sessionOptions,postOptions)
+assert(ok)
+now=0.7; m:Update(); assert(m:ClaimPost(idS,'A'))
+m:MarkArrived(idS); now=1; m:Update(); now=2; m:Update()
+assert(m:GetSession(idS).state=='Imprisoned' and m:GetSession(idS).unlockAt==17)
+assert((select(2,m:RegisterStruggle(99)))=='NO_SESSION')
+assert((select(2,m:RegisterStruggle(7)))=='NOT_YET')
+now=5; m:Update()
+assert((select(2,m:RegisterStruggle(7)))=='NOT_YET')
+now=17.0; m:Update()
+assert(kindAt('StruggleReady'))
+local pressOk,cnt,total
+now=17.1
+pressOk,cnt,total=m:RegisterStruggle(7); assert(pressOk and cnt==1 and total==3)
+assert((select(2,m:RegisterStruggle(7)))=='TOO_FAST')
+assert(m:GetSession(idS).struggle==1)
+now=17.3; pressOk,cnt=m:RegisterStruggle(7); assert(pressOk and cnt==2)
+now=17.5; pressOk,cnt,total=m:RegisterStruggle(7); assert(pressOk and cnt==3 and total==3)
+m:FlushEvents()                                           -- the Service flushes after each entry
+assert(not m:GetSession(idS))
+local _,released=kindAt('Released')
+assert(released and released.r=='BROKE_FREE')
+assert((select(2,m:RegisterStruggle(7)))=='NO_SESSION')
+assert(#m:NearestFreePosts({X=0,Y=0,Z=0})==1)
+
+-- ---- rescue ------------------------------------------------------------------
+now=0; m=newManager(); dead={}; rescuerOK={}
+assert(m:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+local idR
+ok,idR=m:StartSession(11,{},sessionOptions,postOptions)
+assert(ok)
+now=0.7; m:Update(); assert(m:ClaimPost(idR,'A'))
+m:MarkArrived(idR); now=1; m:Update(); now=2; m:Update()
+assert(m:GetSession(idR).state=='Imprisoned')
+assert((select(2,m:StartRescue(11,11)))=='SELF_RESCUE')
+assert((select(2,m:StartRescue(11,-2)))=='INVALID_PLAYER')
+assert((select(2,m:StartRescue(1234,21)))=='NO_SESSION')
+local monster2={}
+local okBusy,busyId=m:StartSession(12,monster2,sessionOptions,postOptions)
+assert(okBusy)
+assert((select(2,m:StartRescue(11,12)))=='RESCUER_BUSY')
+assert(m:CancelPlayer(12,'CANCELLED'))
+m:FlushEvents(); emitted={}                               -- ignore that session's teardown events
+local rOk,rWhy=m:StartRescue(11,21)
+assert(not rOk and rWhy=='RESCUER_TOO_FAR')
+rescuerOK[21]=true
+local started,remain=m:StartRescue(11,21)
+assert(started and remain==3)
+assert(m:GetSession(idR).rescuer==21)
+now=2.5
+local again,rem2=m:StartRescue(11,21)
+assert(again and rem2<3)                                  -- keeps the first deadline
+assert((select(2,m:StartRescue(11,22)))=='RESCUE_IN_PROGRESS')
+now=3; rescuerOK[21]=false; m:Update()
+local _,cancel=kindAt('RescueCancelled')
+assert(cancel and cancel.r=='RESCUER_TOO_FAR')
+assert(m:GetSession(idR).rescuer==nil)
+rescuerOK[22]=true
+assert(m:StartRescue(11,22))
+assert(not kindAt('Released'))
+now=6.1; m:Update()
+local _,done=kindAt('Released')
+assert(done and done.r=='RESCUED')
+assert(not m:GetSession(idR))
+assert(#m:NearestFreePosts({X=0,Y=0,Z=0})==1)
+assert((select(2,m:CancelRescue(11)))=='NO_SESSION')
+-- a rescued player can be captured again
+emitted={}
+local idAgain
+ok,idAgain=m:StartSession(11,{},sessionOptions,postOptions)
+assert(ok and idAgain~=idR)
+
+-- ---- captured player leaves in every live state ------------------------------
+for _,state in ipairs({'Grabbing','Carrying','PuttingDown','Imprisoned'}) do
+    now=0; dead={}; rescuerOK={}
+    m=newManager()
+    assert(m:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+    local idX
+    ok,idX=m:StartSession(31,{},sessionOptions,postOptions)
+    assert(ok)
+    if state~='Grabbing' then
+        now=0.7; m:Update(); assert(m:ClaimPost(idX,'A'))
+    end
+    if state=='PuttingDown' or state=='Imprisoned' then
+        m:MarkArrived(idX); now=1; m:Update()
+    end
+    if state=='Imprisoned' then now=2; m:Update() end
+    assert(m:GetSession(idX).state==state)
+    emitted={}
+    dead[31]=true; now=now+0.1; m:Update()
+    local _,gone=kindAt('Released')
+    assert(gone and gone.r=='PLAYER_DEAD')
+    assert(not m:IsBusy(31))
+    assert(#m:NearestFreePosts({X=0,Y=0,Z=0})==1)
+end
+
+-- ---- teardown paths ----------------------------------------------------------
+now=0; dead={}; rescuerOK={}
+m=newManager()
+local post={}
+assert(m:RegisterPost(post,'A',{Location={X=0,Y=0,Z=0}}))
+local monster={}
+ok,id=m:StartSession(41,monster,sessionOptions,postOptions)
+now=0.7; m:Update(); assert(m:ClaimPost(id,'A'))
+assert((select(2,m:CancelPlayer(999)))=='NO_SESSION')
+assert(m:CancelPlayer(41,'CANCELLED'))
+assert(not m:IsBusy(41))
+assert((select(2,m:CancelMonster(monster)))=='NO_SESSION')
+ok,id=m:StartSession(41,monster,sessionOptions,postOptions)
+assert(m:CancelMonster(monster,'MONSTER_DESTROYED'))
+m:FlushEvents()
+local _,drop=kindAt('Released')
+assert(drop and drop.r=='MONSTER_DESTROYED')
+-- removing an occupied post releases the prisoner
+now=0
+ok,id=m:StartSession(42,{},sessionOptions,postOptions)
+now=0.7; m:Update(); assert(m:ClaimPost(id,'A'))
+m:MarkArrived(id); now=1; m:Update(); now=2; m:Update()
+assert(m:GetSession(id).state=='Imprisoned')
+local removed,postId,relId=m:UnregisterPost(post)
+assert(removed and postId=='A' and relId==id)
+assert(not m:GetSession(id) and m:PostCount()==0)
+assert((select(2,m:UnregisterPost(post)))=='UNKNOWN_POST')
+assert(m:RegisterPost({},'B',{Location={X=0,Y=0,Z=0}}))
+ok,id=m:StartSession(43,{},sessionOptions,postOptions)
+assert(ok)
+assert(m:ReleaseAll('SERVER_SHUTDOWN')==1)
+assert(not m:GetSession(id))
+local _,shutdown=kindAt('Released')
+assert(shutdown and shutdown.r=='SERVER_SHUTDOWN')
+
+-- ---- replication payload and event discipline --------------------------------
+now=0; dead={}; rescuerOK={}
+m=newManager()
+assert(m:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+monster={}
+ok,id=m:StartSession(51,monster,sessionOptions,postOptions)
+assert(m:ClaimPost(id,'A'))
+now=0.7; m:Update(); m:MarkArrived(id); now=1; m:Update(); now=2; m:Update()
+assert(kinds()=='SessionStarted,PostClaimed,Carrying,Arrived,PuttingDown,Imprisoned')
+local snap=m:GetSnapshot(id)
+assert(snap.SessionId==id and snap.PlayerKey==51 and snap.PostId=='A')
+assert(snap.State=='Imprisoned' and snap.StruggleNeed==3 and snap.RescueRadius==200)
+assert(snap.StruggleExpiresAt==17 and snap.StruggleReady==false)
+assert(snap.RescueDuration==3 and snap.RescueEndsAt==nil)
+local previous=0
+for _,e in ipairs(emitted) do
+    assert(e.data.Revision>previous)
+    previous=e.data.Revision
+end
+emitted={}
+m:CancelPlayer(51,'CANCELLED')
+m:FlushEvents()
+local _,rel2=kindAt('Released')
+assert(rel2 and rel2.data.PostId=='A' and rel2.post~=nil and rel2.monster==monster)
+assert(m:GetSnapshot(id)==nil)
+
+-- an emit callback may cancel the session it is told about
+local reentrant
+reentrant=Manager.new({now=function() return now end,
+    validatePlayer=function() return true end,
+    validateRescuer=function() return true end,
+    emit=function(data,kind,reason,post,monster)
+        if kind=='Imprisoned' then reentrant:CancelPlayer(data.PlayerKey,'CANCELLED') end
+    end},Config)
+assert(reentrant:RegisterPost({},'A',{Location={X=0,Y=0,Z=0}}))
+local idRe
+now=0
+ok,idRe=reentrant:StartSession(61,{},sessionOptions,postOptions)
+assert(ok)
+assert(reentrant:ClaimPost(idRe,'A'))
+now=0.7; reentrant:Update(); reentrant:MarkArrived(idRe)
+now=1; reentrant:Update(); now=2; reentrant:Update()
+assert(not reentrant:GetSession(idRe))
+assert(#reentrant:NearestFreePosts({X=0,Y=0,Z=0})==1)
+reentrant:FlushEvents()                                   -- Released was queued
+local queue=reentrant.events
+assert(#queue==0)
+
+-- ---- config bounds -----------------------------------------------------------
+assert(Config.Check({}))
+assert(not Config.Check({PickupDuration=-0.1}))
+assert((select(2,Config.Check({StrugglePresses=0})))=='StrugglePresses')
+assert((select(2,Config.Check({RescueRadius=10})))=='RescueRadius')
+assert((select(2,Config.Check({StruggleInterval=0})))=='StruggleInterval')
+assert(Config.Reasons.BROKE_FREE and Config.States.Imprisoned and Config.Defaults.ImprisonDuration==15)
+
+print('capture rules ok')

@@ -1,0 +1,71 @@
+-- PIE driver 1 (DS): spawn two prison posts at runtime, prove the BP binds to the Lua
+-- module, that BindPoint is reachable at runtime, that both register with distinct ids,
+-- and that a whole Lua table written on the server reaches the client.
+local Tag = '[HT_PIE1]'
+local function L(s) ugcprint(Tag .. ' ' .. tostring(s)) end
+local fails = 0
+local function expect(name, cond)
+    if cond then L('PASS ' .. name) else fails = fails + 1; L('FAIL ' .. name) end
+end
+
+local okS, Service = pcall(function()
+    return UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureService')
+end)
+expect('CaptureService requires cleanly', okS and type(Service) == 'table' and Service.Setup ~= nil)
+if not (okS and type(Service) == 'table') then L('require error: ' .. tostring(Service)) return end
+
+local gm = UGCGameSystem.GetGameMode()
+expect('gamemode present', gm ~= nil)
+if gm == nil then L('no gamemode') return end
+if not gm.CaptureManager then
+    Service.Setup(gm)
+end
+expect('CaptureManager on gamemode', gm.CaptureManager ~= nil)
+L('posts already registered=' .. tostring(gm.CaptureManager and gm.CaptureManager:PostCount()))
+
+local pawn = UGCGameSystem.GetAllPlayerPawn()[1]
+if pawn == nil then L('no pawn') return end
+local base = pawn:K2_GetActorLocation()
+local groundZ = base.Z - pawn.CapsuleComponent:GetScaledCapsuleHalfHeight() - pawn.CharacterMovement.CurrentFloor.FloorDist
+L('fixture floorZ=' .. tostring(groundZ))
+local cls = UE.LoadClass('/EscapeX/Asset/Blueprint/Prefabs/Interactables/BP_PrisonPost.BP_PrisonPost_C')
+expect('BP_PrisonPost class loads', cls ~= nil)
+if cls == nil then L('class missing') return end
+
+local spawned = {}
+for i, dx in ipairs({600, 2400}) do
+    local a = UGCActorComponentUtility.SpawnActor(pawn, cls,
+        {X = base.X + dx, Y = base.Y, Z = groundZ}, {Pitch = 0, Yaw = 0, Roll = 0},
+        {X = 1, Y = 1, Z = 1}, nil)
+    L(string.format('spawn %d obj=%s', i, tostring(a ~= nil)))
+    if a then spawned[#spawned + 1] = a end
+end
+expect('two posts spawned', #spawned == 2)
+
+local checkTimer
+checkTimer = UGCTimerUtility.CreateLuaTimer(1.5, function()
+    UGCTimerUtility.RemoveLuaTimer(checkTimer)
+    local m = gm.CaptureManager
+    expect('both posts self-registered (BeginPlay -> RegisterPost)', m:PostCount() == #spawned)
+    local ids = {}
+    for id in pairs(m.posts) do ids[#ids + 1] = tostring(id) end
+    table.sort(ids)
+    L('post ids: ' .. table.concat(ids, ','))
+    local a = spawned[1]
+    local okRep, rep = pcall(function() return a.bReplicates end)
+    L('post1 PostId=' .. tostring(a.PostId) .. ' BindPoint=' .. tostring(a.BindPoint ~= nil)
+        .. ' RescueArea=' .. tostring(a.RescueArea ~= nil)
+        .. ' bReplicates=' .. tostring(okRep and rep))
+    expect('BindPoint reachable on the runtime instance', a.BindPoint ~= nil)
+    expect('RescueArea reachable on the runtime instance', a.RescueArea ~= nil)
+
+    -- table-replication probe: the whole synced field is replaced, never mutated in place
+    a.PrisonState = {PlayerKey = UGCGameSystem.GetPlayerKeyByPlayerPawn(pawn),
+        State = 'SyncProbe', Revision = 99, Probe = 1234}
+    L('server wrote PrisonState State=' .. tostring(a.PrisonState.State)
+        .. ' Probe=' .. tostring(a.PrisonState.Probe))
+    local okP, detail = Service.RegisterPost(gm, a)
+    L('double RegisterPost returns ' .. tostring(okP) .. ' ' .. tostring(detail))
+    L('SUMMARY1 failures=' .. tostring(fails))
+    L('DONE1')
+end, false, 'HT_PIE1_CHECK')

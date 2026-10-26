@@ -2,6 +2,7 @@
 --Edit Below--
 local UGCGameMode = {}
 local TestRevive = UGCGameSystem.UGCRequire("Script.Common.TestAutoRevive")
+local Capture = UGCGameSystem.UGCRequire("Script.Gameplay.Capture.CaptureService")
 
 function UGCGameMode:ReceiveBeginPlay()
     UGCGameMode.SuperClass.ReceiveBeginPlay(self)
@@ -12,11 +13,20 @@ function UGCGameMode:ReceiveBeginPlay()
         ugcprint("[HeadTeacher] Initial dynamic navigation build requested")
     end
     TestRevive.setup(self)
+    Capture.Setup(self)
+end
+
+function UGCGameMode:ReceiveEndPlay(Reason)
+    Capture.Shutdown(self)
+    UGCGameMode.SuperClass.ReceiveEndPlay(self, Reason)
 end
 
 ---玩家被淘汰事件，基类实现为空，生效范围：服务器
 function UGCGameMode:UGC_PlayerKilledEvent(Killer, VictimPlayer, VictimPawn, DamageType)
+    -- Record the death position before the capture cleanup can move the pawn.
     TestRevive.onKilled(self, Killer, VictimPlayer, VictimPawn, DamageType)
+    -- An eliminated player must not keep holding a prison post or block their carrier.
+    Capture.CancelVictim(self, VictimPlayer, VictimPawn, 'PLAYER_DEAD')
 end
 
 ---玩家复活事件，基类实现为空，生效范围：服务器

@@ -6,7 +6,6 @@
 ---@field HTCatchDistance float
 ---@field HTPatrolSpeed float
 ---@field HTChaseSpeed float
----@field HTDamage float
 ---@field HTDetectionInterval float
 ---@field HTMoveInterval float
 ---@field HTWaypointRadius float
@@ -138,6 +137,12 @@ end
 -- end
 
 local H = UGCGameSystem.UGCRequire("Script.AI.HeadTeacher.HTCommon")
+local C = UGCGameSystem.UGCRequire("Script.AI.HeadTeacher.HTCapture")
+local Presentation = UGCGameSystem.UGCRequire("Script.Gameplay.Capture.CapturePresentation")
+
+-- Synced so the carried player's own client can attach its pawn locally; a
+-- server-only attach does not move them on their screen (measured 2026-10-26).
+TheHeadTeacher.HTCaptureState = {PlayerKey = -1, Stage = "None", Revision = 0}
 
 function TheHeadTeacher:ReceiveBeginPlay()
     TheHeadTeacher.SuperClass.ReceiveBeginPlay(self)
@@ -148,12 +153,15 @@ function TheHeadTeacher:ReceiveBeginPlay()
         -- Monster cannot be body-blocked by player capsules.
         self.CapsuleComponent:SetCollisionResponseToChannel(16, 0)
         if H.valid(self.HitBox) then self.HitBox:SetCollisionResponseToChannel(16, 0) end
+    elseif self.HTCaptureState then
+        -- Late join: apply whatever the server already published for this monster.
+        Presentation.Carrier(self, self.HTCaptureState)
     end
 end
 
 function TheHeadTeacher:GetReplicatedProperties()
     return "HTDetectionEnabled", "HTViewDistance", "HTViewFullAngle",
-        "HTConePitch", "HTConeYaw", "HTConeRoll", "HTAttachSocket"
+        "HTConePitch", "HTConeYaw", "HTConeRoll", "HTAttachSocket", "HTCaptureState"
 end
 
 function TheHeadTeacher:OnRep_HTViewDistance() H.setupCone(self) end
@@ -163,17 +171,30 @@ function TheHeadTeacher:OnRep_HTConeYaw() H.setupCone(self) end
 function TheHeadTeacher:OnRep_HTConeRoll() H.setupCone(self) end
 function TheHeadTeacher:OnRep_HTAttachSocket() H.setupCone(self) end
 
--- Replace only this function when the final capture effect is available.
+-- Capture replaces the old damage settlement: the caught player is carried to a
+-- prison post instead of being eliminated. Returns started, reason so the Catch
+-- task can decide whether to stay Running (see BTT_HTCatch).
 function TheHeadTeacher:HandleCaughtPlayer(Target, ChaseSequenceId, Controller)
-    if not self:HasAuthority() then return end
-    local amount=UGCGameSystem.ApplyDamage(Target, H.config(self, "HTDamage"), Controller, self, {})
+    if not self:HasAuthority() then return false, 'NOT_AUTHORITY' end
+    local started, reason = C.begin(self, Target)
     ugcprint("[HeadTeacher] Catch sequence="..tostring(ChaseSequenceId)..
-        " requestedDamage="..tostring(H.config(self,"HTDamage")).." appliedDamage="..tostring(amount))
+        " started="..tostring(started).." result="..tostring(reason))
+    return started, reason
 end
 
-function TheHeadTeacher:ReceiveEndPlay()
-    if self:HasAuthority() then H.releaseUnusedRigs(self,{}) end
-    TheHeadTeacher.SuperClass.ReceiveEndPlay(self)
+function TheHeadTeacher:OnRep_HTCaptureState()
+    if self:HasAuthority() then return end
+    Presentation.Carrier(self, self.HTCaptureState)
+end
+
+function TheHeadTeacher:ReceiveEndPlay(Reason)
+    if self:HasAuthority() then
+        -- Never leave a player attached to an actor that is going away.
+        C.cancel(self, 'MONSTER_DESTROYED')
+    else
+        Presentation.End(self)
+    end
+    TheHeadTeacher.SuperClass.ReceiveEndPlay(self, Reason)
 end
 
 return TheHeadTeacher

@@ -1,20 +1,23 @@
 -- Shared operations for BT_HeadTeacher. Scheduling belongs exclusively to the BT.
 local M = {}
-M.ServerRigs = {}
 M.Defaults = {
     HTViewDistance = 1000, HTViewFullAngle = 60, HTCatchDistance = 30,
-    HTPatrolSpeed = 150, HTChaseSpeed = 500, HTDamage = 300,
+    HTPatrolSpeed = 150, HTChaseSpeed = 500,
     HTDetectionInterval = 0.1, HTMoveInterval = 0.5,
     HTWaypointRadius = 50, HTDiagnosticInterval = 5,
     HTAttachSocket = "headSocket", HTSourceSocket = "headSocket",
-    HTTargetSocket = "headSocket", HTRouteTag = "HT_Route",
+    HTTargetBoundsHeightRatio = 0.75, HTRouteTag = "HT_Route",
     HTSightChannel = 3, HTDebug = false,
     HTConePitch = 0, HTConeYaw = -171.49657, HTConeRoll = -90,
     -- The catch re-check reuses the distance measured when the chase decided; this
     -- bounds how far the target may have moved since then (teleport guard).
     HTCatchSanity = 200,
-    HTServerSightMeshPath = "/Game/Arts_Player/Characters/Mesh/Female/Head/Mesh/F_Head_10.F_Head_10",
-    HTServerSightAnimClassPath = "/Game/Arts_Player/Characters/Animation/Base_AnimBP/CH_MainChar_Anim_BP.CH_MainChar_Anim_BP_C",
+    -- Capture sequence. CaptureService reads these through M.config so a blueprint
+    -- variable of the same name overrides the default per monster instance.
+    HTCarrySocket = "headSocket",
+    HTPickupDuration = 0.6, HTPutDownDuration = 0.6,
+    HTEscortSpeed = 300, HTArriveRadius = 120, HTEscortTimeout = 20,
+    HTImprisonDuration = 15, HTStruggleInterval = 0.15,
 }
 
 function M.config(p, key)
@@ -59,7 +62,7 @@ end
 
 -- Temporary diagnostic switch: logs [HT_TRACE] lines for chase exits and catch
 -- decisions. Set to false (or remove the M.trace* helpers) when done.
-M.TRACE = true
+M.TRACE = false
 local TraceWindow = 0.5
 
 function M.traceEvent(message)
@@ -130,75 +133,45 @@ function M.socket(p, mesh, name)
     return mesh:GetSocketLocation(name)
 end
 
-function M.visible(p, target)
-    local a = M.socket(p, p.Mesh, M.config(p,"HTSourceSocket"))
-    -- This editor branch strips the player's skeletal asset/animation on DS.
-    -- Use an explicit, configurable player-rig mapping, never a height fallback.
-    local mesh=target.Mesh
-    local leased=M.ServerRigs[target]
-    if leased then
-        leased.owners[p]=true
-        M.data(p).socketRigs=M.data(p).socketRigs or {}
-        M.data(p).socketRigs[target]=true
+-- One explicit bounds sample, independent of the player's visual mesh/rig.
+-- Extent is HALF size. 0.75 samples the upper region, below the box top.
+function M.sightPoint(p, target)
+    if not M.valid(target) then return nil end
+    local center, extent = {}, {}
+    target:GetActorBounds(true, center, extent)
+    local ratio = M.config(p, "HTTargetBoundsHeightRatio")
+    local function finite(n)
+        return type(n)=="number" and n==n and math.abs(n)<math.huge
     end
-    if p:HasAuthority() and M.valid(mesh) and not mesh.SkeletalMesh then
-        local path=M.config(p,"HTServerSightMeshPath")
-        local animPath=M.config(p,"HTServerSightAnimClassPath")
-        if not path or path=="" or not animPath or animPath=="" then
-            M.log(p,"player-rig","Server player rig mapping missing; detection skipped")
-            return false
-        end
-        local asset,anim=UE.LoadObject(path),UE.LoadClass(animPath)
-        if not M.valid(asset) or not M.valid(anim) then
-            M.log(p,"player-rig","Configured server player rig could not be loaded")
-            return false
-        end
-        M.ServerRigs[target]={owners={[p]=true},mesh=mesh,
-            asset=mesh.SkeletalMesh,anim=mesh.AnimClass,tick=mesh.MeshComponentUpdateFlag,
-            tickEnabled=mesh:IsComponentTickEnabled()}
-        M.data(p).socketRigs=M.data(p).socketRigs or {}
-        M.data(p).socketRigs[target]=true
-        mesh:SetSkeletalMesh(asset,true)
-        if not mesh:GetAttachParent() then
-            mesh:K2_AttachToComponent(target.MeshContainer or target.CapsuleComponent,"",0,0,0,false)
-        end
-        mesh:SetAnimInstanceClass(anim,true)
-        mesh.MeshComponentUpdateFlag=0
-        mesh:SetComponentTickEnabled(true)
-        M.log(p,"player-rig","Loaded configured DS player socket rig: "..path)
-        return false -- sample after at least one server animation update
+    if not (finite(center.X) and finite(center.Y) and finite(center.Z)
+        and finite(extent.Z) and extent.Z>0
+        and finite(ratio) and ratio>=0 and ratio<=1) then
+        M.log(p,"sight-bounds","Invalid player collision bounds or height ratio; detection skipped")
+        return nil
     end
-    local b = M.socket(p, target.Mesh, M.config(p,"HTTargetSocket"))
-    if not a or not b then return false end
-    local blocked, hit = KismetSystemLibrary.LineTraceSingleByCollisionChannel(
-        p, a, b, M.config(p,"HTSightChannel"), false, {p},
-        M.config(p,"HTDebug") and 1 or 0, {}, true,
-        {R=0,G=1,B=0,A=1}, {R=1,G=0,B=0,A=1}, 0.12)
-    if not blocked then return true end
-    return hit ~= nil and (hit.Actor == target or
-        (M.valid(hit.Component) and hit.Component:GetOwner() == target))
+    return {X=center.X,Y=center.Y,Z=center.Z+extent.Z*ratio}
 end
 
-function M.releaseUnusedRigs(p,keep)
-    local owned=M.data(p).socketRigs or {}
-    for target in pairs(owned) do
-        if not keep[target] then
-            local record=M.ServerRigs[target]
-            if record then
-                record.owners[p]=nil
-                if not next(record.owners) then
-                    if M.valid(record.mesh) then
-                        record.mesh:SetAnimInstanceClass(record.anim,false)
-                        record.mesh:SetSkeletalMesh(record.asset,true)
-                        record.mesh.MeshComponentUpdateFlag=record.tick
-                        record.mesh:SetComponentTickEnabled(record.tickEnabled)
-                    end
-                    M.ServerRigs[target]=nil
-                end
-            end
-            owned[target]=nil
-        end
+function M.visible(p, target)
+    local a = M.socket(p, p.Mesh, M.config(p,"HTSourceSocket"))
+    if not a then return false end
+    local b = M.sightPoint(p, target)
+    if not b then return false end
+    local blocked = KismetSystemLibrary.LineTraceSingleByCollisionChannel(
+        p, a, b, M.config(p,"HTSightChannel"), false, {p,target},
+        M.config(p,"HTDebug") and 1 or 0, {}, true,
+        {R=0,G=1,B=0,A=1}, {R=1,G=0,B=0,A=1}, 0.12)
+    if not blocked then
+        M.trace(p,"vis",string.format("vis_clear mode=bounds src=(%.0f,%.0f,%.0f) dst=(%.0f,%.0f,%.0f)",
+            a.X,a.Y,a.Z,b.X,b.Y,b.Z))
+        return true
     end
+    -- The target itself is ignored above; any remaining blocking hit is cover.
+    -- Do not dereference FHitResult object handles: this editor/DS binding has
+    -- produced invalid FName/object data while resolving their names/owners.
+    M.trace(p,"vis",string.format("vis_blocked mode=bounds src=(%.0f,%.0f,%.0f) dst=(%.0f,%.0f,%.0f)",
+        a.X,a.Y,a.Z,b.X,b.Y,b.Z))
+    return false
 end
 
 function M.setupCone(p)
@@ -228,6 +201,16 @@ function M.setupCone(p)
     return true
 end
 
+-- A player already being carried or held by another capture must not be locked again.
+-- Reached through the GameMode instead of requiring CaptureService: that module
+-- requires this one, and a require cycle would leave a half-built table.
+function M.busyPlayer(key)
+    local ok, mode = pcall(function() return UGCGameSystem.GetGameMode() end)
+    if not (ok and M.valid(mode) and mode.CaptureManager) then return false end
+    local busy = mode.CaptureManager:IsBusy(key)
+    return busy == true
+end
+
 function M.scan(p)
     local cone = p.RedLightMesh
     if not M.setupCone(p) then return nil end
@@ -239,10 +222,11 @@ function M.scan(p)
     for _,target in pairs(candidates or {}) do
         if not seen[target] and M.alive(target) then
             seen[target] = true
-            if M.visible(p,target) then
+            local key = UGCGameSystem.GetPlayerKeyByPlayerPawn(target)
+            if not M.busyPlayer(key) and M.visible(p,target) then
                 visible[#visible+1] = {actor=target,
                     distance=M.distance(p:K2_GetActorLocation(),target:K2_GetActorLocation()),
-                    key=UGCGameSystem.GetPlayerKeyByPlayerPawn(target)}
+                    key=key}
             end
         end
     end
@@ -251,7 +235,6 @@ function M.scan(p)
         return a.distance < b.distance
     end)
     local selected=visible[1] and visible[1].actor or nil
-    M.releaseUnusedRigs(p,selected and {[selected]=true} or seen)
     return selected
 end
 
@@ -357,7 +340,6 @@ end
 function M.abort(task,p)
     if M.valid(p) and p:HasAuthority() then
         M.stop(p)
-        M.releaseUnusedRigs(p,{})
     end
     task:FinishAbort()
 end
