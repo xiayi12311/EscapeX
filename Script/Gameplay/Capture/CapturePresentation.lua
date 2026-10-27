@@ -2,6 +2,7 @@
 -- to the carrier: measured 2026-10-26 that a server-only attach keeps the server's
 -- copy in place while the player's own screen stays where they were standing.
 -- No gameplay decision happens here; the server state is the only input.
+local Camera = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureCamera')
 local P = {}
 
 local LOG = '[HTCapture]'
@@ -120,6 +121,11 @@ end
 function P.Carrier(actor, state)
     if not valid(actor) then return end
     if not accepts(actor, state) then return end
+    if wants(state, {'Grabbing', 'Carrying', 'PuttingDown'}) then
+        Camera.Start(actor, 'carry')
+    else
+        Camera.Stop(actor)
+    end
     if wants(state, {'Carrying', 'PuttingDown'}) then
         grab(actor, 'carry', state.CarrySocket)
     elseif holding and holding.actor == actor then
@@ -132,13 +138,18 @@ function P.Bind(actor, state)
     if not valid(actor) then return end
     if not accepts(actor, state) then return end
     if wants(state, {'Imprisoned'}) then
+        Camera.Start(actor, 'bind')
         grab(actor, 'bind', nil)
     elseif holding and holding.actor == actor then
+        Camera.Stop(actor)
         release(nil)
+    else
+        Camera.Stop(actor)
     end
 end
 
 function P.End(actor)
+    Camera.Stop(actor)
     if holding and holding.actor == actor then release(nil) end
     applied[actor] = nil
 end

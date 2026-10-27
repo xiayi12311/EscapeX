@@ -220,7 +220,7 @@ end
 -- a stale "Imprisoned" on the monster would outlive the escort forever.
 local function publishMonster(monster, data)
     if not valid(monster) then return end
-    local held = (data.State == 'Carrying' or data.State == 'PuttingDown')
+    local held = (data.State == 'Grabbing' or data.State == 'Carrying' or data.State == 'PuttingDown')
     local current = monster.HTCaptureState
     if not held then
         -- The monster is freed from a session as soon as the player is bound, so it can

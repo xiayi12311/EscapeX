@@ -18,6 +18,9 @@ local timers={}
 
 local cache={}
 local function requireModule(name)
+    if name=='Script.Gameplay.Capture.CaptureCamera' then
+        return {Start=function() end, Stop=function() end}
+    end
     if cache[name] then return cache[name] end
     local path=TEST_ROOT..'/'..name:gsub('%.','/')..'.lua'
     local mod=dofile(path)
@@ -376,6 +379,8 @@ check('catch stays Running, escorts, binds and then finishes', function()
     -- stay walkable), but nothing is attached until the carry phase.
     assert(calls.attach==nil, 'attach must wait for the carry phase')
     assert(calls.entered==1 and calls.invincible==true, 'freeze starts at the grab itself')
+    assert(m.HTCaptureState.Stage=='Grabbing' and m.HTCaptureState.PlayerKey==1,
+        'grab stage must reach the local camera before the carry phase')
     assert((m.stops or 0)>=1)
 
     clock=clock+0.7
