@@ -18,6 +18,7 @@ M.Defaults = {
     HTPickupDuration = 0.6, HTPutDownDuration = 0.6,
     HTEscortSpeed = 300, HTArriveRadius = 120, HTEscortTimeout = 20,
     HTImprisonDuration = 15, HTStruggleInterval = 0.15,
+    HTPlayerPawnChannel = 16, HTPawnChannel = 2,
 }
 
 function M.config(p, key)
@@ -280,6 +281,24 @@ end
 
 function M.stop(p)
     UGCGenericCharacterSystem.StopMove(p)
+end
+
+-- The monster must not be body-blocked by players, and must not block them either.
+-- Measured 2026-10-26: the server-side capsule already answered channel 16 with Ignore,
+-- but every client's copy still answered Overlap/Block, so local prediction could still
+-- be shouldered. This has to run on both ends, not only under HasAuthority.
+-- Channel 16 is this build's PlayerPawn channel (see setupCone), 2 is the generic Pawn
+-- channel; the live player capsule's object type is 2; channel 4 is Camera.
+function M.ignorePlayers(p)
+    local channels = { M.config(p, "HTPlayerPawnChannel"), M.config(p, "HTPawnChannel") }
+    for _, channel in ipairs(channels) do
+        if M.valid(p.CapsuleComponent) then
+            p.CapsuleComponent:SetCollisionResponseToChannel(channel, 0)
+        end
+        if M.valid(p.HitBox) then
+            p.HitBox:SetCollisionResponseToChannel(channel, 0)
+        end
+    end
 end
 
 function M.move(p,position,speed)

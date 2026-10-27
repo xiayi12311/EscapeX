@@ -107,6 +107,18 @@ local function playerPawn(key, loc)
     function p:K2_DetachFromActor() calls.detach=(calls.detach or 0)+1; return true end
     function p:K2_SetActorLocation(loc,sweep,hit,teleport) calls.place=loc; calls.placeTeleport=teleport; return true end
     function p:K2_SetActorRelativeLocation(loc,sweep,hit,teleport) calls.relative=loc; return true end
+    p.CharacterMovement = {
+        MovementMode = 1,
+        tick = true,
+        IsComponentTickEnabled = function(self) return self.tick end,
+        SetComponentTickEnabled = function(self, enabled) self.tick = enabled end,
+        SetMovementMode = function(self, mode)
+            self.MovementMode = mode
+            calls.modes = calls.modes or {}
+            calls.modes[#calls.modes + 1] = mode
+            return true
+        end,
+    }
     p.controller={key=key}
     pawns[key]=p
     return p
@@ -194,6 +206,112 @@ local function imprison(g, sessionId, postId)
 end
 
 -- ---------- service setup -----------------------------------------------------
+check('monster collision ignores actual Pawn and PlayerPawn channels, not Camera', function()
+    freshWorld()
+    local capsuleResponses,hitResponses={},{}
+    local monster={
+        CapsuleComponent={SetCollisionResponseToChannel=function(_,channel,response) capsuleResponses[channel]=response end},
+        HitBox={SetCollisionResponseToChannel=function(_,channel,response) hitResponses[channel]=response end},
+    }
+    H.ignorePlayers(monster)
+    assert(capsuleResponses[2]==0 and capsuleResponses[16]==0)
+    assert(hitResponses[2]==0 and hitResponses[16]==0)
+    assert(capsuleResponses[4]==nil and hitResponses[4]==nil, 'Camera is not the Pawn channel')
+end)
+
+check('movement simulation is restored on every server-side carry exit', function()
+    local reasons={'PLAYER_DEAD','PLAYER_UNAVAILABLE','BT_ABORTED','MONSTER_DESTROYED','SERVER_SHUTDOWN','POST_REMOVED'}
+    for _,reason in ipairs(reasons) do
+        local g=freshWorld()
+        local post=newPost('EXIT_POST',400,0,0)
+        assert(Service.RegisterPost(g,post))
+        local p=playerPawn(1)
+        local monster=newMonster()
+        local ok,sid=Service.StartCapture(g,monster,p)
+        assert(ok)
+        clock=clock+0.7; g.CaptureManager:Update()
+        assert(p.CharacterMovement.MovementMode==0 and not p.CharacterMovement.tick, reason..': lock not acquired')
+        if reason=='SERVER_SHUTDOWN' then Service.Shutdown(g)
+        elseif reason=='POST_REMOVED' then
+            imprison(g,sid,'EXIT_POST')
+            assert(p.CharacterMovement.MovementMode==0 and not p.CharacterMovement.tick)
+            assert(Service.UnregisterPost(g,post))
+        elseif reason=='BT_ABORTED' or reason=='MONSTER_DESTROYED' then
+            assert(Service.CancelMonster(g,monster,reason))
+        else assert(Service.CancelPlayer(g,1,reason)) end
+        assert(p.CharacterMovement.MovementMode==1 and p.CharacterMovement.tick, reason..': movement not restored')
+    end
+end)
+
+check('movement restores after failed carry and bind attachments', function()
+    for _,kind in ipairs({'carry','bind'}) do
+        local g=freshWorld()
+        assert(Service.RegisterPost(g,newPost('FAIL_POST',400,0,0)))
+        local p=playerPawn(1)
+        local monster=newMonster()
+        local ok,sid=Service.StartCapture(g,monster,p)
+        assert(ok)
+        if kind=='carry' then p.K2_AttachToActor=function() return false end end
+        clock=clock+0.7; g.CaptureManager:Update()
+        if kind=='bind' then
+            assert(p.CharacterMovement.MovementMode==0 and not p.CharacterMovement.tick)
+            p.K2_AttachToComponent=function() return false end
+            assert(Service.ClaimPost(g,sid,'FAIL_POST'))
+            assert(Service.MarkArrived(g,sid))
+            clock=clock+0.1; g.CaptureManager:Update()
+            clock=clock+0.7; g.CaptureManager:Update()
+        end
+        assert(not g.CaptureManager:GetSnapshot(sid))
+        assert(p.CharacterMovement.MovementMode==1 and p.CharacterMovement.tick, kind..' failure kept movement locked')
+    end
+end)
+
+check('local movement restores when carry or bind presentation ends', function()
+    freshWorld()
+    local p=playerPawn(1)
+    UGCGameSystem.GetLocalPlayerController=function() return {key=1,K2_GetPawn=function() return p end} end
+    local monster=newMonster()
+    Presentation.Carrier(monster,{PlayerKey=1,Stage='Carrying',SessionId=900,Revision=1})
+    assert(p.CharacterMovement.MovementMode==0 and not p.CharacterMovement.tick)
+    Presentation.End(monster)
+    assert(p.CharacterMovement.MovementMode==1 and p.CharacterMovement.tick)
+    local post=newPost('LOCAL_POST',400,0,0)
+    Presentation.Bind(post,{PlayerKey=1,State='Imprisoned',SessionId=901,Revision=1})
+    assert(p.CharacterMovement.MovementMode==0 and not p.CharacterMovement.tick)
+    Presentation.Bind(post,{PlayerKey=-1,State='Free',SessionId=901,Revision=2})
+    assert(p.CharacterMovement.MovementMode==1 and p.CharacterMovement.tick)
+end)
+
+check('capture preserves an already disabled movement tick', function()
+    local g=freshWorld()
+    local p=playerPawn(1)
+    p.CharacterMovement.tick=false
+    assert(Service.RegisterPost(g,newPost('TICK_POST',400,0,0)))
+    assert(Service.StartCapture(g,newMonster(),p))
+    clock=clock+0.7; g.CaptureManager:Update()
+    assert(Service.CancelPlayer(g,1,'TEST_DONE'))
+    assert(p.CharacterMovement.tick==false)
+    UGCGameSystem.GetLocalPlayerController=function() return {key=1,K2_GetPawn=function() return p end} end
+    local m=newMonster()
+    Presentation.Carrier(m,{PlayerKey=1,Stage='Carrying',SessionId=910,Revision=1})
+    Presentation.End(m)
+    assert(p.CharacterMovement.tick==false)
+end)
+
+check('ending old local hold does not alter a respawned pawn', function()
+    freshWorld()
+    local old=playerPawn(1)
+    local current=old
+    UGCGameSystem.GetLocalPlayerController=function() return {key=1,K2_GetPawn=function() return current end} end
+    local m=newMonster()
+    Presentation.Carrier(m,{PlayerKey=1,Stage='Carrying',SessionId=911,Revision=1})
+    current=playerPawn(1)
+    current.CharacterMovement.tick=false
+    Presentation.End(m)
+    assert(old.CharacterMovement.tick==true)
+    assert(current.CharacterMovement.tick==false, 'new pawn must not be restored by old hold')
+end)
+
 check('service registers posts and refuses a post without a bind point', function()
     local g=freshWorld()
     local bad=newPost('BAD',0,0,0); bad.BindPoint=nil
@@ -265,6 +383,9 @@ check('catch stays Running, escorts, binds and then finishes', function()
     t:ReceiveTickAI(nil, m, 0.05)
     local snap=g.CaptureManager:GetSnapshot(cap.id)
     assert(snap and snap.State=='Carrying', 'must be carrying after pickup duration')
+    -- a carried pawn must stop running its own ground movement, on the server side too
+    local lastMode = calls.modes and calls.modes[#calls.modes] or -1
+    assert(lastMode==0, 'movement simulation must be stopped while carrying, got '..tostring(lastMode))
     assert(snap.PostId=='NEAR', 'nearest free post is claimed, got '..tostring(snap.PostId))
     assert(calls.attach and calls.attach.actor==m and calls.attach.socket=='headSocket')
     assert(calls.entered==1 and calls.invincible==true, 'frozen and invincible while carried')

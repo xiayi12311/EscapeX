@@ -59,9 +59,15 @@ end
 
 local function release(keep)
     if not holding or (keep and holding.actor == keep) then return end
-    local pawn = localPawn()
-    if pawn then
+    -- Release the pawn we acquired; a respawn may already have replaced localPawn().
+    local pawn = holding.pawn
+    if valid(pawn) then
         pcall(function() return pawn:K2_DetachFromActor(2, 2, 2) end)
+        -- restore local prediction only once the attach is gone
+        pcall(function()
+            pawn.CharacterMovement:SetMovementMode(1) -- Walking
+            pawn.CharacterMovement:SetComponentTickEnabled(holding.movementTick)
+        end)
         log('detached from ' .. tostring(holding.kind))
     end
     holding = nil
@@ -101,7 +107,12 @@ local function grab(actor, kind, socketName)
         log('local attach failed: ' .. tostring(err))
         return
     end
-    holding = {actor = actor, kind = kind}
+    holding = {actor = actor, kind = kind, pawn = pawn,
+        movementTick = pawn.CharacterMovement:IsComponentTickEnabled()}
+    -- None stops locomotion, but native movement Tick still corrected the attached
+    -- pawn's relative position. Suspend it for the hold and restore the saved state.
+    pawn.CharacterMovement:SetMovementMode(0) -- MOVE_None
+    pawn.CharacterMovement:SetComponentTickEnabled(false)
     log('attached local pawn to ' .. kind)
 end
 

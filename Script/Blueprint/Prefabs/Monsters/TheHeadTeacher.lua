@@ -1,5 +1,4 @@
 ---@class TheHeadTeacher_C:BP_UGC_GenericMobPawn_Base_C
----@field SpotLight USpotLightComponent
 ---@field RedLightMesh UStaticMeshComponent
 ---@field HitBox UCapsuleComponent
 ---@field HTViewDistance float
@@ -7,7 +6,6 @@
 ---@field HTCatchDistance float
 ---@field HTPatrolSpeed float
 ---@field HTChaseSpeed float
----@field HTDamage float
 ---@field HTDetectionInterval float
 ---@field HTMoveInterval float
 ---@field HTWaypointRadius float
@@ -149,12 +147,12 @@ TheHeadTeacher.HTCaptureState = {PlayerKey = -1, Stage = "None", Revision = 0}
 function TheHeadTeacher:ReceiveBeginPlay()
     TheHeadTeacher.SuperClass.ReceiveBeginPlay(self)
     H.setupCone(self)
+    -- Both ends: a client-side copy that still blocks players would push the carried
+    -- player around and would let a player body-block the monster in local prediction.
+    H.ignorePlayers(self)
     if self:HasAuthority() then
         -- This monster's head socket must remain current on the dedicated server.
         self.Mesh.MeshComponentUpdateFlag = 0
-        -- Monster cannot be body-blocked by player capsules.
-        self.CapsuleComponent:SetCollisionResponseToChannel(16, 0)
-        if H.valid(self.HitBox) then self.HitBox:SetCollisionResponseToChannel(16, 0) end
     elseif self.HTCaptureState then
         -- Late join: apply whatever the server already published for this monster.
         Presentation.Carrier(self, self.HTCaptureState)

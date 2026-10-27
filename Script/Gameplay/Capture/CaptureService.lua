@@ -153,6 +153,37 @@ local function detach(pawn)
     pcall(function() return pawn:K2_DetachFromActor(2, 2, 2) end)
 end
 
+-- Measured 2026-10-26: while attached, the carried pawn kept simulating Walking
+-- (CharacterMovement.UpdatedComponent is the same RootComponent that is attached,
+-- MovementMode=1 on both ends), and its relative offset drifted monotonically by
+-- hundreds of centimetres as the carrier walked. A carried body must not run its own
+-- ground movement; restore it only after the detach, on every exit path.
+local movementTicks = {} -- pawn -> tick state owned by this capture
+local function setSimulatedMovement(pawn, on)
+    if not valid(pawn) then if pawn then movementTicks[pawn] = nil end; return end
+    local ok, err = pcall(function()
+        local cm = pawn.CharacterMovement
+        if cm == nil then error('captured pawn has no CharacterMovement') end
+        if not on then
+            if movementTicks[pawn] == nil then
+                movementTicks[pawn] = {enabled = cm:IsComponentTickEnabled()}
+            end
+            cm:SetMovementMode(0) -- MOVE_None
+            -- Native 2026-10-27: None alone still drifted ~7 m in 8 s. Suspending
+            -- movement Tick on both ends removed it (DS 0, client <0.003 cm).
+            cm:SetComponentTickEnabled(false)
+        else
+            cm:SetMovementMode(1) -- Walking, after detach
+            local saved = movementTicks[pawn]
+            if saved then
+                cm:SetComponentTickEnabled(saved.enabled)
+                movementTicks[pawn] = nil
+            end
+        end
+    end)
+    if not ok then log('setSimulatedMovement(' .. tostring(on) .. ') failed: ' .. tostring(err)) end
+end
+
 -- BindPoint cannot be raised through the editor scripting layer (RelativeLocation is
 -- a struct property this binding refuses to set), so the bind height is a post
 -- variable applied after attaching. Designers can also move BindPoint in the BP.
@@ -269,9 +300,11 @@ local function emit(data, kind, reason, post, monster)
         end
         setInvincible(pawn, true)
     elseif kind == 'Carrying' then
+        setSimulatedMovement(pawn, false)
         local ok, err = attach(pawn, monster, data.CarrySocket)
         if not ok then
             log('server carry attach failed (' .. tostring(err) .. '); releasing session')
+            setSimulatedMovement(pawn, true)
             failSession(data.SessionId, 'CARRY_ATTACH_FAILED')
             -- failSession already emitted Released; publishing the stale Carrying
             -- snapshot afterwards would re-attach the player on their own client.
@@ -296,6 +329,7 @@ local function emit(data, kind, reason, post, monster)
         setFrozen(pawn, false)
         setInvincible(pawn, false)
         detach(pawn)
+        setSimulatedMovement(pawn, true)
         -- Only a player who was actually bound gets re-anchored at the post; an escort
         -- that failed halfway must be released where they stand (plan section 7).
         if data.WasBound and post and post.location then
