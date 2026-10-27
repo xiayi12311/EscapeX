@@ -39,7 +39,14 @@ UE={LoadClass=function(path) if path:find('BP_SearchableDesk',1,true) then retur
 WidgetLayoutLibrary={GetViewportSize=function() return {X=100,Y=100} end}
 GameplayStatics={DeprojectScreenToWorld=function() return true,{}, {X=1,Y=0,Z=0} end}
 ESlateVisibility={Visible=0,Collapsed=1,SelfHitTestInvisible=2}
-UGCWidgetUtility={CreateWidget=function() return widget end}
+local pendingWidget=nil
+local deferWidget=false
+local destroyedWidget=nil
+UGCWidgetUtility={CreateWidgetAsync=function(path,cb)
+        assert(path:find('WBP_Interact_patient',1,true))
+        if deferWidget then pendingWidget=cb else cb(widget) end
+    end,
+    DestroyWidget=function(w) destroyedWidget=w end}
 UnrealNetwork={CallUnrealRPC=function(controller,target,name,actor)
     requested=requested+1; sent={controller,target,name,actor}
 end}
@@ -147,4 +154,14 @@ focus.StopMonitor()
 assert(timers.monitor==nil and timers.update==nil,'StopMonitor must release both loops')
 assert(focus.Monitor()==true,'monitor can be armed again after stopping')
 focus.StopMonitor()
+-- A late asynchronous creation must not attach a widget to a dead session.
+deferWidget=true
+localPawn=pawn
+focus.Begin(pawn)
+assert(pendingWidget,'widget creation must begin before the first desk is targeted')
+hits={a}; timers.update(); timers.update()
+assert(not shown,'focus must wait for the asynchronous widget')
+focus.End()
+pendingWidget(widget)
+assert(destroyedWidget==widget,'late widget from an ended session must be destroyed')
 print('PASS: local trace, request target, replicated timing, focus switching and teardown')

@@ -61,33 +61,31 @@ local function selectDesk(c)
     return nil
 end
 
-local function ensureWidget(c)
-    if valid(c.widget) then return c.widget end
-    if c.widgetFailed then return nil end
-    local cls=UE.LoadClass(Config.WidgetClassPath)
-    if cls==nil then
-        -- explicit, once: a missing migrated asset must not turn into a per-tick error
-        c.widgetFailed=true
-        log('widget class unavailable, interaction UI disabled')
-        return nil
-    end
-    local widget=UGCWidgetUtility.CreateWidget(cls)
-    if not valid(widget) then
-        c.widgetFailed=true
-        log('widget creation failed, interaction UI disabled')
-        return nil
-    end
-    c.widget=widget
-    widget:AddToViewport(20)
-    log('interaction widget created and added to viewport')
-    widget:SetRequestHandler(function()
-        local actor=c.state.focus
-        if c.state:CanRequest() and valid(actor) then
-            log('requesting search through controller RPC')
-            UnrealNetwork.CallUnrealRPC(c.controller,c.controller,'ServerRequestDeskSearch',actor)
-        end
+local function prepareWidget(c)
+    local ok,err=pcall(function()
+        UGCWidgetUtility.CreateWidgetAsync(Config.WidgetClassPath,function(widget)
+            if current~=c then
+                if valid(widget) then UGCWidgetUtility.DestroyWidget(widget) end
+                return
+            end
+            if not valid(widget) then
+                log('async widget creation failed, interaction UI disabled')
+                return
+            end
+            c.widget=widget
+            widget:SetVisibility(ESlateVisibility.Collapsed)
+            widget:AddToViewport(20)
+            widget:SetRequestHandler(function()
+                local actor=c.state.focus
+                if c.state:CanRequest() and valid(actor) then
+                    log('requesting search through controller RPC')
+                    UnrealNetwork.CallUnrealRPC(c.controller,c.controller,'ServerRequestDeskSearch',actor)
+                end
+            end)
+            log('interaction widget prepared asynchronously')
+        end)
     end)
-    return widget
+    if not ok then log('async widget preparation failed: '..tostring(err)) end
 end
 
 function M.Update()
@@ -114,8 +112,8 @@ function M.Update()
         if valid(c.widget) then c.widget:SetVisibility(ESlateVisibility.Collapsed) end
         return
     end
-    local widget=ensureWidget(c)
-    if widget==nil then return end
+    local widget=c.widget
+    if not valid(widget) then return end
     local s=display.DeskState
     local active=c.state.active==display and s and s.State=='Searching' and s.SearchingPlayerId==c.key
     widget:SetButtonVisible(not active and c.state:CanRequest())
@@ -163,6 +161,7 @@ function M.Begin(pawn)
     end
     local c={pawn=pawn,controller=pc,key=key,deskClass=cls,state=FocusState.new(key),notReady=0}
     current=c
+    prepareWidget(c)
     for _,desk in pairs(UGCActorComponentUtility.GetAllActorsOfClass(pawn,cls)) do
         if valid(desk) then c.state:ApplyDeskState(desk,desk.DeskState) end
     end
