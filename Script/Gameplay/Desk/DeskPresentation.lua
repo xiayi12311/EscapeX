@@ -1,8 +1,18 @@
 -- Client-only visual state. One timer per relevant desk; never commits gameplay.
 local P={}
 local Config=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskOutcomeConfig')
+local DeskClock=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskClock')
 local function valid(o) return o~=nil and KismetSystemLibrary.IsValid(o) end
-local function now() return UGCGameSystem.GetGameState():GetServerWorldTimeSeconds() end
+-- Same server-time base as the focus ring. Do not invent or reuse a missing clock.
+local clockWarned=false
+local function now()
+    local t=DeskClock.ApproxServerNow()
+    if t==nil and not clockWarned then
+        clockWarned=true
+        ugcprint('[DeskSearch] presentation clock unavailable; awaiting valid time')
+    elseif t~=nil then clockWarned=false end
+    return t
+end
 local function stopTimer(a)
     if a.DeskVisualTimer then UGCTimerUtility.RemoveLuaTimer(a.DeskVisualTimer) end
     a.DeskVisualTimer=nil
@@ -56,6 +66,11 @@ function P.Apply(a,s)
     if (s.Revision or 0)<(a.DeskVisualRevision or 0) then return end
     local signature=version..':'..tostring(s.InteractionId)..':'..tostring(s.State)
     if signature==a.DeskVisualSignature then return end
+    local openingNow
+    if s.State=='Opening' then
+        openingNow=now()
+        if openingNow==nil then ensureTimer(a); return end
+    end
     a.DeskVisualSignature=signature; a.DeskVisualVersion=version; a.DeskVisualRevision=s.Revision or 0
     local outcome=Config.Outcomes[s.FinalOutcomeId]
     if outcome and outcome.ContentScale and valid(a.DeskContent) then
@@ -63,12 +78,12 @@ function P.Apply(a,s)
         a.DeskContentHeight=outcome.ContentScale.Z
     end
     closeUI(a)
-    if s.State=='Searching' or s.State=='Opening' then ensureTimer(a) else stopTimer(a) end
+    if s.State=='Opening' then ensureTimer(a) else stopTimer(a) end
     if s.State=='Closed' or s.State=='Searching' then
         stopSequence(a); drawerAt(a,false)
     elseif s.State=='Opening' then
         stopSequence(a)
-        local elapsed=math.max(0,now()-(s.OpenStartTime or now()))
+        local elapsed=math.max(0,openingNow-(s.OpenStartTime or openingNow))
         if elapsed<(s.OpenDuration or 1) then
             local ok,err=pcall(function()
                 local sequence=UE.LoadObject('/EscapeX/Asset/Sequences/LS_DeskOpen.LS_DeskOpen')
@@ -94,26 +109,10 @@ function P.Update(a)
     if not s then return end
     if (s.Revision or 0)<(a.DeskVisualRevision or 0) then return end
     P.Apply(a,s)
-    if s.State=='Searching' then
-        local pc=UGCGameSystem.GetLocalPlayerController()
-        local key=valid(pc) and UGCGameSystem.GetPlayerKeyByPlayerController(pc)
-        if key~=s.SearchingPlayerId then closeUI(a); return end
-        if not valid(a.DeskProgressUI) then
-            local cls=UE.LoadClass('/EscapeX/Asset/UI/WBP_DeskSearchProgress.WBP_DeskSearchProgress_C')
-            a.DeskProgressUI=UGCWidgetUtility.CreateWidget(cls)
-            if valid(a.DeskProgressUI) then a.DeskProgressUI:AddToViewport(20) end
-        end
-        local w=a.DeskProgressUI
-        if valid(w) then
-            local bar=w:GetWidgetFromName('SearchProgress')
-            local label=w:GetWidgetFromName('SearchLabel')
-            local duration=(s.SearchEndTime or 0)-(s.SearchStartTime or 0)
-            local remaining=math.max(0,(s.SearchEndTime or 0)-now())
-            if valid(bar) then bar:SetPercent(duration>0 and math.min(1,math.max(0,1-remaining/duration)) or 0) end
-            if valid(label) then label:SetText(remaining>0 and string.format('搜索中… %.1f 秒',remaining) or '等待确认…') end
-        end
-    elseif s.State=='Opening' then
-        local elapsed=now()-(s.OpenStartTime or now())
+    if s.State=='Opening' then
+        local currentTime=now()
+        if currentTime==nil then return end
+        local elapsed=currentTime-(s.OpenStartTime or currentTime)
         if elapsed>=(s.OpenDuration or 1) then
             -- 序列播完会把绑定组件还原，这里在时长到达时立即落到打开姿态，
             -- 避免等服务端 Opened 快照期间抽屉自己滑回闭合位置。

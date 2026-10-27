@@ -1,0 +1,150 @@
+local timers, outlines, hits, sent={}, {}, {}, {}
+local shown, progress, requested, attached = false, nil, 0, nil
+-- the module logs through ugcprint on success paths too, so the sink must exist before
+-- the first Begin/Update, not only where it is asserted
+local printed={}
+ugcprint=function(text) printed[#printed+1]=tostring(text) end
+local function loggedSince(index, needle)
+    for i=index,#printed do if printed[i]:find(needle,1,true) then return true end end
+    return false
+end
+-- one clock for both ends of the timing contract: the service stamps start/end from the
+-- server world clock and the presentation reads the same base through DeskClock
+local serverNow=11
+local pawn={K2_GetActorLocation=function() return {X=0,Y=0,Z=0} end}
+local localPawn=pawn
+local pc={PlayerCameraManager={GetCameraLocation=function() return {X=0,Y=0,Z=0} end}}
+local widget={AddToViewport=function() end, RemoveFromParent=function() shown=false end,
+    SetRequestHandler=function(_,f) attached=f end,
+    SetButtonVisible=function(_,v) widgetButton=v end,
+    SetProgress=function(_,v) progress=v end,
+    SetWorldAnchor=function() return true end,
+    SetVisibility=function(_,v) shown=v==2 end}
+local deskClass={}
+local function desk(x)
+    return {DeskState={State='Closed',Revision=1}, DeskInteractRadius=180,
+        SearchArea={K2_GetComponentLocation=function() return {X=x,Y=0,Z=0} end}}
+end
+local a,b=desk(100),desk(120)
+KismetSystemLibrary={IsValid=function(o) return o and not o.destroyed end,
+    GetObjectName=function(o) return o and o.objName or 'nil' end,
+    GetGameTimeInSeconds=function() return serverNow end,
+    LineTraceMultiForObjects=function(pc,startpos,endpos,types,complex,ignore,debug,out)
+        traceEnd=endpos; traceTypes=types
+        for i,v in ipairs(hits) do out[i]={Actor={Get=function() return v end}} end
+        return #hits>0
+    end}
+UE={LoadClass=function(path) if path:find('BP_SearchableDesk',1,true) then return deskClass else return {} end end,
+    IsA=function(actor,cls) return actor==a or actor==b end}
+WidgetLayoutLibrary={GetViewportSize=function() return {X=100,Y=100} end}
+GameplayStatics={DeprojectScreenToWorld=function() return true,{}, {X=1,Y=0,Z=0} end}
+ESlateVisibility={Visible=0,Collapsed=1,SelfHitTestInvisible=2}
+UGCWidgetUtility={CreateWidget=function() return widget end}
+UnrealNetwork={CallUnrealRPC=function(controller,target,name,actor)
+    requested=requested+1; sent={controller,target,name,actor}
+end}
+UGCTimerUtility={CreateLuaTimer=function(iv,f,loop,name)
+        if name=='EscapeX.DeskFocus.Monitor' then timers.monitor=f; return 'mtimer' end
+        timerInterval=iv; timers.update=f; return 'timer'
+    end,
+    RemoveLuaTimer=function(t)
+        if t=='mtimer' then timers.monitor=nil; return end
+        assert(t=='timer'); timers.update=nil
+    end}
+UGCActorComponentUtility={GetAllActorsOfClass=function() return {a,b} end}
+UGCGameSystem={UGCRequire=function(name) return dofile(TEST_ROOT..'/'..name:gsub('%.','/')..'.lua') end,
+    GetLocalPlayerController=function() return pc end, GetLocalPlayerPawn=function() return localPawn end,
+    GetPlayerKeyByPlayerController=function() return 7 end,
+    GetGameState=function() return {GetServerWorldTimeSeconds=function() return serverNow end,
+        ServerWorldTimeSecondsDelta=0} end,
+    DrawOutline=function(actor,on) outlines[#outlines+1]={actor,on} end}
+local focus=dofile(TEST_ROOT..'/Script/Gameplay/Interaction/DeskFocusPresentation.lua')
+focus.Begin(pawn)
+assert(loggedSince(1,'focus session started'),'Begin must log the session start')
+hits={a}; timers.update(); assert(shown and widgetButton and attached)
+focus.Begin({}); assert(timers.update, 'a remote pawn must not clear the local focus session')
+attached(); assert(requested==1 and sent[1]==pc and sent[2]==pc and sent[4]==a)
+a.DeskState={State='Searching',SearchingPlayerId=7,SearchStartTime=10,SearchEndTime=12,Revision=2}
+focus.DeskChanged(a,a.DeskState)
+hits={b}; timers.update(); assert(shown and not widgetButton and progress==0.5)
+attached(); assert(requested==1, 'focused B must not receive a request while A is active')
+hits={}; timers.update(); assert(shown and progress==0.5, 'look-away keeps the active display')
+a.DeskState={State='Closed',Revision=3}; focus.DeskChanged(a,a.DeskState)
+timers.update(); assert(not shown and progress==0.5)
+hits={{}}; timers.update(); assert(not shown, 'non-desk hit blocks a target')
+focus.End(); assert(timers.update==nil and not shown)
+assert(loggedSince(1,'focus session stopped'),'End must log the session stop')
+
+-- parameters come from the shared config, not from values hardcoded next to the loop
+local Config=dofile(TEST_ROOT..'/Script/Gameplay/Interaction/InteractionConfig.lua')
+hits={a}; focus.Begin(pawn); timers.update()
+assert(timerInterval==Config.DetectInterval, 'cadence must come from config')
+assert(math.abs(traceEnd.X-Config.TraceDistance)<0.001,
+    'ray length must come from config, got '..tostring(traceEnd and traceEnd.X))
+assert(type(traceTypes)=='table' and #traceTypes==2, 'object types passed through')
+
+-- the ring must stay inside [0,1] whatever the server stamps, so a clock skew can never
+-- render 30x progress or a negative arc
+a.DeskState={State='Searching',SearchingPlayerId=7,Revision=9,InteractionId=1,ResetVersion=1,
+    SearchStartTime=serverNow-10,SearchEndTime=serverNow-8}
+focus.DeskChanged(a,a.DeskState); hits={a}; timers.update()
+assert(progress==1, 'overrun must clamp to 1, got '..tostring(progress))
+a.DeskState={State='Searching',SearchingPlayerId=7,Revision=10,InteractionId=2,ResetVersion=1,
+    SearchStartTime=serverNow+100,SearchEndTime=serverNow+102}
+focus.DeskChanged(a,a.DeskState); hits={a}; timers.update()
+assert(progress==0, 'a new search must restart from 0, got '..tostring(progress))
+-- within one search the ring never steps back, even when the client clock estimate does
+a.DeskState={State='Searching',SearchingPlayerId=7,Revision=12,InteractionId=3,ResetVersion=1,
+    SearchStartTime=serverNow-1,SearchEndTime=serverNow+1}
+focus.DeskChanged(a,a.DeskState); hits={a}; timers.update()
+local high=progress
+serverNow=serverNow-0.5      -- replicated delta refreshed backwards
+hits={a}; timers.update()
+assert(progress>=high, 'progress must not regress inside one search, got '..tostring(progress)
+    ..' < '..tostring(high))
+-- a third interaction still restarts cleanly
+a.DeskState={State='Searching',SearchingPlayerId=7,Revision=13,InteractionId=4,ResetVersion=1,
+    SearchStartTime=serverNow,SearchEndTime=serverNow+2}
+focus.DeskChanged(a,a.DeskState); hits={a}; timers.update()
+assert(progress~=nil and progress<0.6, 'new interaction must reset, got '..tostring(progress))
+a.DeskState={State='Searching',SearchingPlayerId=7,Revision=14,InteractionId=4,ResetVersion=1,
+    SearchStartTime=serverNow-1,SearchEndTime=serverNow+1}
+focus.DeskChanged(a,a.DeskState); hits={a}; timers.update()
+assert(math.abs(progress-0.5)<0.001,'half way must read 0.5, got '..tostring(progress))
+assert(loggedSince(1,'desk state reached focus layer'),'DeskChanged must be observable natively')
+focus.End()
+
+-- no clock at all: the ring stays empty instead of inventing a base
+local savedGames=UGCGameSystem.GetGameState
+UGCGameSystem.GetGameState=function() return nil end
+a.DeskState={State='Searching',SearchingPlayerId=7,Revision=12,
+    SearchStartTime=1,SearchEndTime=3}
+focus.Begin(pawn); focus.DeskChanged(a,a.DeskState); hits={a}; timers.update()
+assert(progress==nil, 'missing clock must hide the ring, got '..tostring(progress))
+UGCGameSystem.GetGameState=savedGames
+focus.End()
+
+-- monitor path: the failure measured in PIE was that a replaced pawn never restarted the
+-- layer while the old pawn's teardown stopped it. The controller-side watch loop must
+-- therefore survive pawn removal and a new pawn.
+local before2=#printed
+assert(focus.Monitor()==true,'Monitor must arm once')
+localPawn=pawn
+timers.monitor()
+assert(timers.update,'the first local pawn must start the scan loop')
+localPawn=nil
+timers.monitor()
+assert(timers.update==nil,'a removed pawn must stop the scan loop')
+assert(loggedSince(before2,'focus session started'),'first pawn must log a start')
+assert(loggedSince(before2,'focus session stopped'),'removed pawn must log a stop')
+assert(loggedSince(before2,'local pawn unavailable'),'idle state must be reported, not silent')
+local respawned={K2_GetActorLocation=function() return {X=1,Y=1,Z=1} end}
+localPawn=respawned
+timers.monitor()
+assert(timers.update,'a replacing pawn must restart the layer')
+assert(loggedSince(before2,'focus session started'),'respawn must log a second start')
+focus.StopMonitor()
+assert(timers.monitor==nil and timers.update==nil,'StopMonitor must release both loops')
+assert(focus.Monitor()==true,'monitor can be armed again after stopping')
+focus.StopMonitor()
+print('PASS: local trace, request target, replicated timing, focus switching and teardown')

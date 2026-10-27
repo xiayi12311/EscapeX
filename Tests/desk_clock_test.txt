@@ -1,0 +1,14 @@
+local messages={}
+ugcprint=function(v) messages[#messages+1]=v end
+local gs={ServerWorldTimeSecondsDelta=4,GetServerWorldTimeSeconds=function() return 20 end}
+UGCGameSystem={GetGameState=function() return gs end}
+KismetSystemLibrary={IsValid=function(o) return o~=nil end,GetGameTimeInSeconds=function() return 16 end}
+local clock=dofile(TEST_ROOT..'/Script/Gameplay/Interaction/DeskClock.lua')
+assert(clock.ServerNow({})==20 and clock.ApproxServerNow({})==20)
+gs.ServerWorldTimeSecondsDelta=nil
+assert(clock.ApproxServerNow({})==nil, 'missing delta must not silently switch clock')
+assert(#messages==1 and messages[1]:find('unavailable',1,true))
+gs.GetServerWorldTimeSeconds=function() error('unavailable') end
+assert(clock.ServerNow({})==nil, 'server must not substitute another clock')
+assert(#messages==2 and messages[2]:find('unavailable',1,true))
+print('PASS: desk clocks report unavailable inputs without changing sources')

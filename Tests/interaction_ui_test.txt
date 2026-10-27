@@ -1,0 +1,64 @@
+-- Presentation remains local; only the server-side controller invokes the service.
+local button = dofile(TEST_ROOT..'/Script/MIG/UI/Hospital/WBP_Interact.lua')
+local parent = dofile(TEST_ROOT..'/Script/MIG/Blueprint/AI_PatientMonster/WBP_Interact_patient.lua')
+local function object(methods, data) return setmetatable(data or {}, {__index=methods}) end
+ESlateVisibility={Visible=0,Collapsed=1,SelfHitTestInvisible=2}
+local function material()
+    return {SetScalarParameterValue=function(self,name,value) self.name=name; self.value=value end}
+end
+local function image()
+    local m=material()
+    return {GetDynamicMaterial=function() return m end,SetVisibility=function(self,v) self.visibility=v end,mat=m}
+end
+local function event()
+    return {Add=function(self,f,owner) self.f=f; self.owner=owner end,
+        Remove=function(self,f,owner) assert(self.f==f and self.owner==owner); self.f=nil end}
+end
+local click=event()
+local label={SetText=function(self,v) self.text=v end}
+local child=object(button,{Button_Interact={OnClicked=click},TextBlock_Label=label,Image_Progress=image(),
+    SetVisibility=function(self,v) self.visibility=v end})
+local right={SetVisibility=function(self,v) self.visibility=v end}
+local ring=image()
+local view=object(parent,{WBP_Interact_Left=child,WBP_Interact_Right=right,Image_CircleProgress=ring})
+child:Construct(); view:Construct()
+assert(label.text=='搜索' and right.visibility==ESlateVisibility.Collapsed)
+assert(ring.visibility==ESlateVisibility.Collapsed)
+local requests=0
+view:SetRequestHandler(function() requests=requests+1 end)
+click.f(click.owner)
+assert(requests==1)
+view:SetProgress(0.4)
+assert(ring.mat.value==0.4 and child.Image_Progress.mat.value==0.4)
+assert(ring.visibility==ESlateVisibility.SelfHitTestInvisible)
+view:SetProgress(nil)
+assert(ring.mat.value==0 and ring.visibility==ESlateVisibility.Collapsed)
+local slot={GetAnchors=function() return {Minimum={X=0.5,Y=0.5}} end,
+    GetAlignment=function() return {X=0,Y=0} end,GetSize=function() return {X=60,Y=40} end,
+    SetPosition=function(self,v) self.position=v end}
+view.CP_CurrentActor={}
+WidgetLayoutLibrary={ProjectWorldLocationToWidgetPosition=function() return true,{X=500,Y=300} end,
+    SlotAsCanvasSlot=function() return slot end, GetViewportScale=function() return 2 end,
+    GetViewportSize=function() return {X=1600,Y=800} end}
+Vector2D={New=function(x,y) return {X=x,Y=y} end}
+assert(view:SetWorldAnchor({},{}))
+assert(slot.position.X==70 and slot.position.Y==80, 'anchor, DPI and widget size must be applied')
+view:Destruct(); child:Destruct(); assert(click.f==nil)
+
+local calls={}
+UGCGameSystem={UGCRequire=function(name)
+    if name=='Script.Gameplay.Desk.DeskSearchService' then
+        return {StartSearch=function(gm,desk,pc) calls[#calls+1]={gm=gm,desk=desk,pc=pc}; return true end}
+    end
+    return {}
+end,GetGameMode=function() return 'server-gamemode' end}
+ugcprint=function() end
+local controller=dofile(TEST_ROOT..'/Script/Blueprint/UGCPlayerController.lua')
+local server=object(controller,{HasAuthority=function() return true end})
+local client=object(controller,{HasAuthority=function() return false end})
+local desk={}
+assert(server:GetAvailableServerRPCs()=='ServerRequestDeskSearch')
+client:ServerRequestDeskSearch(desk); assert(#calls==0)
+server:ServerRequestDeskSearch(desk)
+assert(#calls==1 and calls[1].gm=='server-gamemode' and calls[1].desk==desk and calls[1].pc==server)
+print('PASS: local click/progress presentation and authority-only search start adapter')

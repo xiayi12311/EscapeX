@@ -1,6 +1,6 @@
 # 统一聚焦与交互界面迁移计划
 
-状态：准备阶段，尚未导入蓝图或切换现有交互。来源目录：`E:/GoogleDownload`，来源工程 NightClincX。
+状态：课桌已接入统一交互，单人 PIE 验证进行中。来源目录：`E:/GoogleDownload`，来源工程 NightClincX。
 
 ## 基线与边界
 
@@ -25,7 +25,7 @@
 | 玩家Controller网络入口 | 用实际请求Controller调用既有 `DeskSearchService.StartSearch(gm, desk, pc)` | 接收客户端伪造的PlayerKey、完成结果或奖励 |
 | 原有课桌服务与Manager | 校验、读秒、中断、打开、结果、计数、重置与复制 | 新界面的布局与输入 |
 
-当前入口是 `BP_SearchableDesk:OnClickDeskSearch(Click_Param)`，由原生 SearchClick 提供服务器Controller。新UI不能直接调用客户端上的服务器服务，需要在玩家Controller增加“请求开始课桌搜索”的适配入口；该入口仍调用同一个StartSearch，继续使用服务已有距离、生存状态等校验。
+统一界面经玩家 Controller 的服务器 RPC 请求开始搜索，服务仍调用同一个 StartSearch，并执行既有距离、生存状态等校验。原生 SearchClick 的显示和点击入口已停用，避免出现重复按钮。
 
 `DeskState` 仍是唯一业务真值。圆环使用 `SearchStartTime` / `SearchEndTime` 和已有服务器世界时间计算，按 `SearcherPlayerId` 限定本地搜索者；不使用源工程每0.03秒累加常数的完成计时。
 
@@ -84,3 +84,22 @@
 - [x] 列出缺失资源与需移除的医院业务依赖。
 - [ ] 完整资产依赖确认。
 - [ ] 新表现层实现与原生验收。
+
+2026-10-27 进度补充：
+
+- 聚焦层由本地控制器启动 Monitor，检测本地 Pawn 更换后结束旧会话并创建新会话。PIE 中死亡复活后日志确认旧会话结束、新会话启动，用户确认可以继续搜索。
+- `BP_SearchableDesk:OnRep_DeskState` 同时通知新聚焦层（`DeskChanged`），`ReceiveEndPlay` 客户端分支通知
+  `DeskRemoved`；否则被取消/完成的搜索会一直把该桌当作"活动桌"残留。
+- 时间基统一到一个模块 `Script/Gameplay/Interaction/DeskClock.lua`：服务器写
+  `ServerNow`（GameState 服务器世界时间，读不到时明确记录错误并返回空值），
+  客户端用 `本地世界时间 + ServerWorldTimeSecondsDelta` 平滑估计；进度夹取到 [0,1]，
+  取不到时间基时圆环留空而不是猜。参数集中到 `InteractionConfig.lua`（扫描周期、射线长度、描边粗细与颜色）。
+- 相机未就绪不再每 tick 抛异常：前 100 次静默重试，之后**一条明确日志 + 停掉循环**，不把"没就绪"当成功。
+- 离线测试新增生命周期接线用例（`Tests/interaction_lifecycle_test.txt`）并把四个交互用例正式纳入
+  `Tests/run_interaction_tests.py`（此前那三个交互测试**没有任何 runner 会跑到**，等于随时可腐烂）。
+- PIE 已验证新按钮经 Controller RPC 启动搜索；圆环在客户端根据服务器确认的起止时间本地计算，服务器不逐帧同步进度。无法取得时间基时明确记录错误，不切换其他时钟。
+- 单人 PIE 中用户确认只出现一个搜索按钮、圆环和抽屉正常；移开准星继续搜索，走远中断并可从头重试。服务器日志记录第 5、10 次分别产生 `NoteEvent_05`、`NoteEvent_10`，用户确认纸条与广播正常。这些第 5、10 次验证发生在移除时间基兜底之前。
+- 最新时间逻辑下再次验证了搜索、圆环与抽屉。搜索读秒期间被抓后，服务器日志显示全部课桌重置、计数归零，挣脱后能够重新发起搜索；用户确认表现正常。
+- 多人互斥、遮挡、不同分辨率及离场/目标销毁清理仍待验证。代码检查发现 Monitor 的 StopMonitor 尚未接到 Controller 的结束生命周期，离场清理不能视为已完成。
+- 部署教训见 `knowledge/recipes/working-copy-deploy-lua-headers.md`：工程版 `BP_SearchableDesk.lua` 带
+  `---@field/--Edit Below--` 生成头部而工作副本那份没有，整份覆盖会删掉生成区；已改为以工程版为基准重做改动。

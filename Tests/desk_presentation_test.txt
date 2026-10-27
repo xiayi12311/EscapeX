@@ -2,10 +2,11 @@ local now,created,stops,destroyed=0,0,0,0
 local timers={}
 local serial=0
 local pc={}
-KismetSystemLibrary={IsValid=function(o) return not o.destroyed end}
+KismetSystemLibrary={IsValid=function(o) return not o.destroyed end,
+    GetGameTimeInSeconds=function() return now end}
 UGCGameSystem.GetServerTimeSec=function() return math.floor(now) end
 UGCGameSystem.GetGameState=function()
-    return {GetServerWorldTimeSeconds=function() return now end}
+    return {GetServerWorldTimeSeconds=function() return now end,ServerWorldTimeSecondsDelta=0}
 end
 UGCGameSystem.GetLocalPlayerController=function() return pc end
 UGCGameSystem.GetPlayerKeyByPlayerController=function() return 7 end
@@ -41,12 +42,12 @@ P.Begin(a); assert(a.Drawer.pos.Y==0 and a.Drawer.pos.Z==0 and not a.DeskContent
 assert(a.DeskContent.pos.Y==-0.8 and math.abs(a.DeskContent.pos.Z-57.85)<1e-6)
 a.DeskState={State='Searching',ResetVersion=1,InteractionId=1,Revision=2,SearchingPlayerId=7,SearchStartTime=0,SearchEndTime=3}
 now=1.5; P.Update(a)
-local ui=a.DeskProgressUI
-assert(ui.visible and ui:GetWidgetFromName('SearchProgress').percent==0.5)
+assert(a.DeskProgressUI==nil and not a.DeskVisualTimer,
+    'old progress widget is disabled; unified focus layer renders search progress')
 -- Emulate a replication layer changing fields in place.
 a.DeskState.State='Opening'; a.DeskState.Revision=3
 a.DeskState.OpenStartTime=1.5; a.DeskState.FinalOutcomeId='NoteEvent_05'
-P.Update(a); assert(created==1 and not ui.visible)
+P.Update(a); assert(created==1 and a.DeskProgressUI==nil)
 assert(a.DeskSequenceActor.bound==a)
 now=2.4; P.Update(a); assert(a.DeskContent.visible and a.DeskContent.pos.Y==-18.8)
 -- 序列结束即落到打开姿态，不等 Opened 快照；重复停止保持幂等。
@@ -58,5 +59,15 @@ assert(created==1)
 local b={Drawer=component(),DeskContent=component(),DeskState={State='Opened',ResetVersion=1,InteractionId=1,Revision=5,FinalOutcomeId='NoteEvent_10'}}
 P.Begin(b); assert(b.Drawer.pos.Y==-18 and b.Drawer.pos.Z==0 and b.DeskContent.visible and created==1 and not b.DeskVisualTimer)
 assert(b.DeskContent.pos.Y==-18.8 and math.abs(b.DeskContent.pos.Z-57.85)<1e-6)
+local savedGameState=UGCGameSystem.GetGameState
+UGCGameSystem.GetGameState=function() return nil end
+local c={Drawer=component(),DeskContent=component(),DeskState={State='Opening',ResetVersion=1,
+    InteractionId=1,Revision=1,OpenStartTime=now,OpenDuration=1}}
+P.Begin(c)
+assert(created==1 and c.DeskVisualTimer and not c.DeskVisualSignature, 'no clock must not start sequence')
+UGCGameSystem.GetGameState=savedGameState
+timers[c.DeskVisualTimer]()
+assert(created==2 and c.DeskVisualSignature, 'sequence must start when the clock becomes available')
+P.End(c)
 P.End(a); P.End(b)
 print('PASS: presentation progress, sequence lifecycle, in-place snapshot changes, reset, stale state, late join (mock)')

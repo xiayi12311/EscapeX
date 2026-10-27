@@ -15,6 +15,7 @@
 --Edit Below--
 local Service=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskSearchService')
 local Presentation=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskPresentation')
+local Focus=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskFocusPresentation')
 local Desk={DeskState={State='Closed',ResetVersion=0,InteractionId=0}}
 
 function Desk:GetReplicatedProperties() return 'DeskState' end
@@ -42,19 +43,22 @@ function Desk:ReceiveBeginPlay()
     end
 end
 
+-- The native click component remains in the blueprint, but its old button and
+-- action are disabled: the unified local focus UI uses the controller RPC instead.
 function Desk:CheckDeskSearchNative(Click_Param)
-    return self.DeskState and self.DeskState.State=='Closed'
+    return false
 end
 
 function Desk:OnClickDeskSearch(Click_Param)
-    if not self:HasAuthority() then return end
-    local PC=Click_Param and Click_Param.PlayerController
-    local ok,reason=Service.StartSearch(UGCGameSystem.GetGameMode(),self,PC)
-    if not ok then ugcprint('[DeskSearch] start rejected '..tostring(reason)) end
 end
 
 function Desk:OnRep_DeskState()
-    if not self:HasAuthority() then Presentation.Apply(self,self.DeskState) end
+    if not self:HasAuthority() then
+        Presentation.Apply(self,self.DeskState)
+        -- the focus layer keeps its own active/focus bookkeeping from this event; without
+        -- it a cancelled or completed search stays latched as "the active desk"
+        Focus.DeskChanged(self,self.DeskState)
+    end
 end
 
 function Desk:ReceiveEndPlay(Reason)
@@ -63,6 +67,7 @@ function Desk:ReceiveEndPlay(Reason)
         Service.Unregister(UGCGameSystem.GetGameMode(),self)
     else
         Presentation.End(self)
+        Focus.DeskRemoved(self)
     end
     Desk.SuperClass.ReceiveEndPlay(self,Reason)
 end

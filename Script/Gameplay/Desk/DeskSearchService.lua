@@ -1,6 +1,7 @@
 -- Engine adapter. Public entry points are server-only; no client RPC is exposed here.
 local Manager=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskSearchManager')
 local Config=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskOutcomeConfig')
+local DeskClock=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskClock')
 local Service={}
 
 local function valid(obj)
@@ -66,7 +67,7 @@ function Service.Setup(gm)
     if not gm:HasAuthority() or gm.DeskSearchManager then return end
     gm.DeskEffectTimers={}
     gm.DeskSearchManager=Manager.new({
-        now=function() return UGCGameSystem.GetGameState():GetServerWorldTimeSeconds() end,
+        now=function() return DeskClock.ServerNow(gm) end,
         roll=function(pool) return Config.Roll(pool) end,
         validate=validate,
         log=log,

@@ -73,7 +73,14 @@ function Manager:StartSearch(id,player)
     if not valid then return false,reason or 'INVALID_PLAYER_OR_DISTANCE' end
     self.serial=self.serial+1
     d.interaction=self.serial; d.player=player
-    d.startTime=self.deps.now(); d.endTime=d.startTime+d.duration
+    local startAt=self.deps.now()
+    if not startAt then
+        -- without a clock the countdown cannot be defined; refuse instead of starting a
+        -- search that can never complete
+        self.players[player]=nil; d.player=nil; d.interaction=0
+        return false,'CLOCK_UNAVAILABLE'
+    end
+    d.startTime=startAt; d.endTime=startAt+d.duration
     d.state='Searching'; self.players[player]=id
     self:publish(d,'SearchStarted')
     return true,d.interaction,d.version
@@ -100,6 +107,7 @@ function Manager:CompleteSearch(id,version,interaction)
         return false,reason or 'INVALID_PLAYER_OR_DISTANCE'
     end
     local now=self.deps.now()
+    if not now then return false,'CLOCK_UNAVAILABLE' end
     if now<d.endTime then return false,'TOO_EARLY' end
     local nextCount=self.TotalOpenedCount+1
     local fixed=self.config.FixedSearchOutcomes or {}
@@ -115,6 +123,7 @@ end
 
 function Manager:Update()
     local now=self.deps.now()
+    if not now then return end
     for id,d in pairs(self.desks) do
         if d.state=='Searching' then
             local valid,reason=self.deps.validate(d.actor,d.player,d.cancelRadius)

@@ -42,8 +42,10 @@ assert(a.DeskState.State=='Closed')
 local desk=dofile(TEST_ROOT..'/Script/Blueprint/Prefabs/Interactables/BP_SearchableDesk.lua')
 a.HasAuthority=function() return true end
 UGCGameSystem.GetGameMode=function() return gm end
-assert(desk.CheckDeskSearchNative(a,{PlayerController=pc,Message=''}))
+assert(not desk.CheckDeskSearchNative(a,{PlayerController=pc,Message=''}))
 desk.OnClickDeskSearch(a,{PlayerController=pc,Message=''})
+assert(a.DeskState.State=='Closed', 'old native click must no longer start searches')
+assert(service.StartSearch(gm,a,pc))
 assert(a.DeskState.State=='Searching')
 assert(not desk.CheckDeskSearchNative(a,{PlayerController=pc,Message=''}))
 now=2.99; callbacks['EscapeX.DeskSearch.Update']()
@@ -69,6 +71,14 @@ gm.DeskSearchManager.TotalOpenedCount=9
 assert(service.StartSearch(gm,a,pc)); now=now+3; callbacks['EscapeX.DeskSearch.Update']()
 effect=gm.DeskEffectTimers[a]; assert(effect)
 callbacks[effect](); assert(tips==1)
+-- The new RPC uses the owning controller itself and the existing server service.
+assert(service.ResetDesk(gm,a))
+local controller=dofile(TEST_ROOT..'/Script/Blueprint/UGCPlayerController.lua')
+pc.HasAuthority=function() return true end
+assert(controller:GetAvailableServerRPCs()=='ServerRequestDeskSearch')
+controller.ServerRequestDeskSearch(pc,a)
+assert(a.DeskState.State=='Searching' and a.DeskState.SearchingPlayerId==7)
+assert(service.CancelPlayer(gm,pc,'TEST_DONE'))
 assert(service.Unregister(gm,a)); assert(not service.StartSearch(gm,a,pc))
 service.Shutdown(gm)
 assert(gm.DeskSearchManager==nil and gm.DeskSearchTimer==nil)
