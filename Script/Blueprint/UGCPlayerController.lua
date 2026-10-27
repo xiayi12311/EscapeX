@@ -1,6 +1,7 @@
 local DeskSearch=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskSearchService')
 local Capture=UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureService')
 local Focus=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskFocusPresentation')
+local FirstPerson=UGCGameSystem.UGCRequire('Script.Gameplay.FirstPerson')
 local PlayerController={}
 
 -- The controller is the stable local-session owner: pawns are replaced on respawn, so the
@@ -9,6 +10,12 @@ local PlayerController={}
 function PlayerController:ReceiveBeginPlay()
     PlayerController.SuperClass.ReceiveBeginPlay(self)
     Focus.Monitor()
+    FirstPerson.MonitorLocal(self)
+end
+
+function PlayerController:ReceiveEndPlay(reason)
+    FirstPerson.StopLocal(self)
+    PlayerController.SuperClass.ReceiveEndPlay(self,reason)
 end
 
 -- Client requests a start through its own controller; no player key or outcome is

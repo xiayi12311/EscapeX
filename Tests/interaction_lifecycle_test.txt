@@ -21,6 +21,7 @@ local captureFake={CancelPlayer=function() calls.captureCancel=calls.captureCanc
 local presentationFake={Apply=function() end,Begin=function() end,End=function() end}
 
 local stubs={
+    ['Script.Gameplay.FirstPerson']={MonitorLocal=function() end,StopLocal=function() end},
     ['Script.Gameplay.Interaction.DeskFocusPresentation']=focusFake,
     ['Script.Gameplay.Desk.DeskSearchService']=serviceFake,
     ['Script.Gameplay.Capture.CaptureService']=captureFake,

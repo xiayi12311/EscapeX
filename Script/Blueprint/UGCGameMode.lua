@@ -4,6 +4,7 @@ local UGCGameMode = {}
 local TestRevive = UGCGameSystem.UGCRequire("Script.Common.TestAutoRevive")
 local DeskSearch = UGCGameSystem.UGCRequire("Script.Gameplay.Desk.DeskSearchService")
 local Capture = UGCGameSystem.UGCRequire("Script.Gameplay.Capture.CaptureService")
+local FirstPerson = UGCGameSystem.UGCRequire("Script.Gameplay.FirstPerson")
 
 function UGCGameMode:ReceiveBeginPlay()
     UGCGameMode.SuperClass.ReceiveBeginPlay(self)
@@ -19,9 +20,14 @@ function UGCGameMode:ReceiveBeginPlay()
 end
 
 function UGCGameMode:ReceiveEndPlay(Reason)
+    FirstPerson.Shutdown()
     Capture.Shutdown(self)
     DeskSearch.Shutdown(self)
     UGCGameMode.SuperClass.ReceiveEndPlay(self, Reason)
+end
+
+function UGCGameMode:UGC_PlayerLoginEvent(PlayerController)
+    if self:HasAuthority() then FirstPerson.Schedule(PlayerController) end
 end
 
 function UGCGameMode:GetOpenedCount()
@@ -62,6 +68,7 @@ end
 ---玩家复活事件，基类实现为空，生效范围：服务器
 function UGCGameMode:UGC_PlayerRespawnEvent(RespawnedController)
     TestRevive.onRespawn(self, RespawnedController)
+    if self:HasAuthority() then FirstPerson.Schedule(RespawnedController) end
 end
 
 return UGCGameMode

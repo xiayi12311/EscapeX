@@ -1,0 +1,34 @@
+local scheduled, removed, applied, output = {}, {}, {}, {}
+KismetSystemLibrary={IsValid=function(x) return x and not x.invalid end}
+UGCTimerUtility={
+    CreateLuaTimer=function(delay,fn,loop,name)
+        local t={delay=delay,fn=fn,loop=loop,name=name}; scheduled[#scheduled+1]=t; return t
+    end,
+    RemoveLuaTimer=function(t) removed[t]=true end,
+}
+UGCGameSystem={GetPlayerPawnByPlayerController=function(pc) return pc.pawn end}
+UGCPlayerPawnSystem={SetIsFPP=function(p,f,force) applied[#applied+1]={p,f,force}; return true end}
+ugcprint=function(s) output[#output+1]=s end
+local F=dofile(TEST_ROOT..'/Script/Gameplay/FirstPerson.lua')
+local pc={PlayerKey=42}
+F.Schedule(pc)
+local t=scheduled[#scheduled]
+t.fn(); assert(#applied==0 and not removed[t])
+pc.pawn={}; t.fn()
+assert(removed[t] and #applied==1 and applied[1][1]==pc.pawn and applied[1][2] and applied[1][3])
+F.Schedule(pc); local old=scheduled[#scheduled]; F.Schedule(pc); assert(removed[old])
+local next=scheduled[#scheduled]; F.Shutdown(); assert(removed[next])
+local missing={PlayerKey=43}; F.Schedule(missing); local timeout=scheduled[#scheduled]
+for i=1,50 do timeout.fn() end
+assert(removed[timeout] and output[#output]:find('unavailable'))
+ELockTPPReason={LTR_Level=16}
+local owner={}; local currentPawn={locks=0,LockTPP=function(self,reason) assert(reason==16); self.locks=self.locks+1 end}
+UGCGameSystem.GetLocalPlayerController=function() return owner end
+UGCGameSystem.GetLocalPlayerPawn=function() return currentPawn end
+assert(not F.MonitorLocal({}))
+assert(F.MonitorLocal(owner))
+local monitor=scheduled[#scheduled]; monitor.fn(); monitor.fn(); assert(currentPawn.locks==1)
+currentPawn={locks=0,LockTPP=currentPawn.LockTPP}; monitor.fn(); assert(currentPawn.locks==1)
+F.StopLocal({}); assert(not removed[monitor])
+F.StopLocal(owner); assert(removed[monitor])
+print('PASS first-person scheduling, replacement and missing-pawn reporting')
