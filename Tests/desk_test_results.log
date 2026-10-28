@@ -1,3 +1,0 @@
-PASS: desk state machine, interruption, contention, 5/10 override, reset, epochs, stale sessions
-PASS: engine adapter server guards, timer lifecycle, snapshot publication and reset interfaces (mock)
-PASS: presentation progress, sequence lifecycle, in-place snapshot changes, reset, stale state, late join (mock)

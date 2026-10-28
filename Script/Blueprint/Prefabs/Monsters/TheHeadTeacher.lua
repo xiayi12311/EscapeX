@@ -1,4 +1,6 @@
 ---@class TheHeadTeacher_C:BP_UGC_GenericMobPawn_Base_C
+---@field HTProximityArea USphereComponent
+---@field SpotLight USpotLightComponent
 ---@field RedLightMesh UStaticMeshComponent
 ---@field HitBox UCapsuleComponent
 ---@field HTViewDistance float
@@ -6,6 +8,7 @@
 ---@field HTCatchDistance float
 ---@field HTPatrolSpeed float
 ---@field HTChaseSpeed float
+---@field HTDamage float
 ---@field HTDetectionInterval float
 ---@field HTMoveInterval float
 ---@field HTWaypointRadius float
@@ -22,6 +25,7 @@
 ---@field HTDetectionEnabled bool
 ---@field HTServerSightMeshPath FString
 ---@field HTServerSightAnimClassPath FString
+---@field HTDetectionDelay float
 --Edit Below--
 local TheHeadTeacher = {}
 

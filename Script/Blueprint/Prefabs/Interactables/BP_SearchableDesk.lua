@@ -13,6 +13,7 @@
 ---@field DeskOpenDuration float
 ---@field DeskRevealOffset float
 ---@field DeskOutcomePool FString
+---@field DeskRequireStanding bool
 --Edit Below--
 local Service=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskSearchService')
 local Presentation=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskPresentation')
