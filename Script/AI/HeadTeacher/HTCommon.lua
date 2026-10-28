@@ -3,7 +3,7 @@ local M = {}
 M.Defaults = {
     HTViewDistance = 1000, HTViewFullAngle = 60, HTCatchDistance = 30,
     HTPatrolSpeed = 150, HTChaseSpeed = 500,
-    HTDetectionInterval = 0.1, HTMoveInterval = 0.5,
+    HTDetectionInterval = 0.1, HTDetectionDelay = 1.0, HTMoveInterval = 0.5,
     HTWaypointRadius = 50, HTDiagnosticInterval = 5,
     HTAttachSocket = "headSocket", HTSourceSocket = "headSocket",
     HTTargetBoundsHeightRatio = 0.75, HTRouteTag = "HT_Route",
@@ -214,13 +214,23 @@ end
 
 function M.scan(p)
     local cone = p.RedLightMesh
-    if not M.setupCone(p) then return nil end
+    if not M.setupCone(p) then return nil,{} end
+    local near=p.HTProximityArea
+    if not M.valid(near) then
+        M.log(p,'proximity-area','HTProximityArea is missing; detection disabled')
+        return nil,{}
+    end
+    near:SetCollisionEnabled(p:HasAuthority() and 1 or 0)
+    near:SetCollisionResponseToAllChannels(0)
+    near:SetCollisionResponseToChannel(16,1)
     -- Query the current convex collision at its live socket transform. This also
     -- catches players already inside when patrol resumes, without overlap events.
     local candidates = UGCActorComponentUtility.GetOverlappingActorsWithPrimitiveComponent(
         cone, cone:K2_GetComponentToWorld(), {ESceneQueryType.PlayerPawn}, nil, {p})
+    local nearby = UGCActorComponentUtility.GetOverlappingActorsWithPrimitiveComponent(
+        near, near:K2_GetComponentToWorld(), {ESceneQueryType.PlayerPawn}, nil, {p})
     local seen, visible = {}, {}
-    for _,target in pairs(candidates or {}) do
+    local function collect(target)
         if not seen[target] and M.alive(target) then
             seen[target] = true
             local key = UGCGameSystem.GetPlayerKeyByPlayerPawn(target)
@@ -231,12 +241,14 @@ function M.scan(p)
             end
         end
     end
+    for _,target in pairs(candidates or {}) do collect(target) end
+    for _,target in pairs(nearby or {}) do collect(target) end
     table.sort(visible,function(a,b)
         if a.distance == b.distance then return a.key < b.key end
         return a.distance < b.distance
     end)
     local selected=visible[1] and visible[1].actor or nil
-    return selected
+    return selected,visible
 end
 
 function M.routes(p)

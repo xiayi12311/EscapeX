@@ -3,6 +3,7 @@ local T = {}
 function T:ReceiveExecuteAI(_,p)
     if not H.begin(self,p,"Patrol") then return end
     self.ScanElapsed = 100
+    self.VisibleSince = {}
     H.traceEvent(string.format("patrol_enter lock=%s %s", tostring(H.valid(H.target(p))), H.snapshot(p,H.target(p))))
     -- A tree restart must not replace a lock left by an interrupted chase.
     if H.valid(H.target(p)) then
@@ -17,16 +18,33 @@ end
 function T:ReceiveTickAI(_,p,dt)
     H.progress(p,dt)
     local route, d = H.routes(p), H.data(p)
-    if #route == 0 then H.stop(p); return end
+    if #route == 0 then self.VisibleSince={}; H.stop(p); return end
     d.index = math.max(1, math.min(d.index,#route))
     if not H.valid(route[d.index]) then
         H.log(p,"route-deleted","Current route waypoint was deleted; waiting for route repair")
+        self.VisibleSince={}
         H.stop(p); return
     end
     self.ScanElapsed = self.ScanElapsed+dt
     if self.ScanElapsed >= H.config(p,"HTDetectionInterval") then
         self.ScanElapsed=0
-        local target=H.scan(p)
+        local _,visible=H.scan(p)
+        local previous=self.VisibleSince
+        local current={}
+        local target=nil
+        local delay=H.config(p,'HTDetectionDelay')
+        if type(delay)~='number' or delay<0 then
+            H.log(p,'detection-delay','Invalid HTDetectionDelay; acquisition disabled')
+            self.VisibleSince={}
+            return
+        end
+        for _,entry in ipairs(visible) do
+            local actor=entry.actor
+            local since=previous[actor] or d.clock
+            current[actor]=since
+            if not target and d.clock-since+0.000001>=delay then target=actor end
+        end
+        self.VisibleSince=current
         if target then
             local bb=H.bb(p)
             local oldSeq=bb:GetValueAsInt("ChaseSequenceId")
@@ -47,6 +65,7 @@ end
 function T:ReceiveAbortAI(_,p)
     H.traceEvent(string.format("patrol_abort %s", H.snapshot(p,H.target(p))))
     p.HTDetectionEnabled=false
+    self.VisibleSince={}
     H.abort(self,p)
 end
 return T
