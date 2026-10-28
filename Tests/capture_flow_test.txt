@@ -808,7 +808,7 @@ check('confirmed capture resets all desk states and count exactly once', functio
     local p=playerPawn(1)
     local mate=playerPawn(2)
     local function desk(id)
-        local a={SearchArea={K2_GetComponentLocation=function() return vec(0,0,0) end}}
+        local a={SearchArea={K2_GetComponentLocation=function() return vec(0,0,0) end,GetScaledSphereRadius=function() return 180 end}}
         assert(Desk.Register(g,a,id))
         return a
     end

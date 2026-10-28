@@ -1,5 +1,5 @@
 local timers, outlines, hits, sent={}, {}, {}, {}
-local shown, progress, requested, attached = false, nil, 0, nil
+local shown, progress, requested, attached, released, cancelled = false, nil, 0, nil, nil, 0
 -- the module logs through ugcprint on success paths too, so the sink must exist before
 -- the first Begin/Update, not only where it is asserted
 local printed={}
@@ -15,15 +15,17 @@ local pawn={K2_GetActorLocation=function() return {X=0,Y=0,Z=0} end}
 local localPawn=pawn
 local pc={PlayerCameraManager={GetCameraLocation=function() return {X=0,Y=0,Z=0} end}}
 local widget={AddToViewport=function() end, RemoveFromParent=function() shown=false end,
-    SetRequestHandler=function(_,f) attached=f end,
+    SetRequestHandler=function(_,f,r) attached=f; released=r end,
     SetButtonVisible=function(_,v) widgetButton=v end,
     SetProgress=function(_,v) progress=v end,
+    ResetWorldAnchor=function() end,
     SetWorldAnchor=function() return true end,
     SetVisibility=function(_,v) shown=v==2 end}
 local deskClass={}
 local function desk(x)
     return {DeskState={State='Closed',Revision=1}, DeskInteractRadius=180,
-        SearchArea={K2_GetComponentLocation=function() return {X=x,Y=0,Z=0} end}}
+        SearchArea={K2_GetComponentLocation=function() return {X=x,Y=0,Z=0} end,GetScaledSphereRadius=function() return 180 end},
+        InteractionAnchor={K2_GetComponentLocation=function() return {X=x,Y=0,Z=10} end}}
 end
 local a,b=desk(100),desk(120)
 KismetSystemLibrary={IsValid=function(o) return o and not o.destroyed end,
@@ -47,15 +49,18 @@ UGCWidgetUtility={CreateWidgetAsync=function(path,cb)
         if deferWidget then pendingWidget=cb else cb(widget) end
     end,
     DestroyWidget=function(w) destroyedWidget=w end}
-UnrealNetwork={CallUnrealRPC=function(controller,target,name,actor)
-    requested=requested+1; sent={controller,target,name,actor}
+UnrealNetwork={CallUnrealRPC=function(controller,target,name,actor,seq)
+    if name=='ServerCancelDeskSearch' then cancelled=cancelled+1 else requested=requested+1 end
+    sent={controller,target,name,actor,seq}
 end}
 UGCTimerUtility={CreateLuaTimer=function(iv,f,loop,name)
         if name=='EscapeX.DeskFocus.Monitor' then timers.monitor=f; return 'mtimer' end
+        if name=='EscapeX.DeskFocus.Anchor' then timers.anchor=f; return 'atimer' end
         timerInterval=iv; timers.update=f; return 'timer'
     end,
     RemoveLuaTimer=function(t)
         if t=='mtimer' then timers.monitor=nil; return end
+        if t=='atimer' then timers.anchor=nil; return end
         assert(t=='timer'); timers.update=nil
     end}
 UGCActorComponentUtility={GetAllActorsOfClass=function() return {a,b} end}
@@ -73,9 +78,10 @@ focus.Begin({}); assert(timers.update, 'a remote pawn must not clear the local f
 attached(); assert(requested==1 and sent[1]==pc and sent[2]==pc and sent[4]==a)
 a.DeskState={State='Searching',SearchingPlayerId=7,SearchStartTime=10,SearchEndTime=12,Revision=2}
 focus.DeskChanged(a,a.DeskState)
-hits={b}; timers.update(); assert(shown and not widgetButton and progress==0.5)
+hits={a}; timers.update(); assert(shown and widgetButton and progress==0.5)
+hits={b}; timers.update(); assert(cancelled==1, 'look-away must cancel the held search')
 attached(); assert(requested==1, 'focused B must not receive a request while A is active')
-hits={}; timers.update(); assert(shown and progress==0.5, 'look-away keeps the active display')
+hits={}; timers.update(); assert(cancelled==1, 'look-away sends cancellation only once')
 a.DeskState={State='Closed',Revision=3}; focus.DeskChanged(a,a.DeskState)
 timers.update(); assert(not shown and progress==0.5)
 hits={{}}; timers.update(); assert(not shown, 'non-desk hit blocks a target')

@@ -14,9 +14,9 @@ local function event()
     return {Add=function(self,f,owner) self.f=f; self.owner=owner end,
         Remove=function(self,f,owner) assert(self.f==f and self.owner==owner); self.f=nil end}
 end
-local click=event()
+local press,release=event(),event()
 local label={SetText=function(self,v) self.text=v end}
-local child=object(button,{Button_Interact={OnClicked=click},TextBlock_Label=label,Image_Progress=image(),
+local child=object(button,{Button_Interact={OnPressed=press,OnReleased=release},TextBlock_Label=label,Image_Progress=image(),
     SetVisibility=function(self,v) self.visibility=v end})
 local right={SetVisibility=function(self,v) self.visibility=v end}
 local ring=image()
@@ -24,10 +24,10 @@ local view=object(parent,{WBP_Interact_Left=child,WBP_Interact_Right=right,Image
 child:Construct(); view:Construct()
 assert(label.text=='搜索' and right.visibility==ESlateVisibility.Collapsed)
 assert(ring.visibility==ESlateVisibility.Collapsed)
-local requests=0
-view:SetRequestHandler(function() requests=requests+1 end)
-click.f(click.owner)
-assert(requests==1)
+local requests,cancels=0,0
+view:SetRequestHandler(function() requests=requests+1 end,function() cancels=cancels+1 end)
+press.f(press.owner); release.f(release.owner)
+assert(requests==1 and cancels==1)
 view:SetProgress(0.4)
 assert(ring.mat.value==0.4 and child.Image_Progress.mat.value==0.4)
 assert(ring.visibility==ESlateVisibility.SelfHitTestInvisible)
@@ -43,12 +43,19 @@ WidgetLayoutLibrary={ProjectWorldLocationToWidgetPosition=function() return true
 Vector2D={New=function(x,y) return {X=x,Y=y} end}
 assert(view:SetWorldAnchor({},{}))
 assert(slot.position.X==70 and slot.position.Y==80, 'anchor, DPI and widget size must be applied')
-view:Destruct(); child:Destruct(); assert(click.f==nil)
+local original=slot.position
+WidgetLayoutLibrary.ProjectWorldLocationToWidgetPosition=function() return true,{X=502,Y=302} end
+assert(view:SetWorldAnchor({},{})); assert(slot.position==original,'small movements must not rewrite the slot')
+WidgetLayoutLibrary.ProjectWorldLocationToWidgetPosition=function() return true,{X=505,Y=300} end
+assert(view:SetWorldAnchor({},{})); assert(slot.position.X==75,'larger movement updates the slot')
+view:ResetWorldAnchor()
+view:Destruct(); child:Destruct(); assert(press.f==nil and release.f==nil)
 
 local calls={}
 UGCGameSystem={UGCRequire=function(name)
     if name=='Script.Gameplay.Desk.DeskSearchService' then
-        return {StartSearch=function(gm,desk,pc) calls[#calls+1]={gm=gm,desk=desk,pc=pc}; return true end}
+        return {StartSearch=function(gm,desk,pc) calls[#calls+1]={gm=gm,desk=desk,pc=pc}; return true end,
+            CancelPlayer=function() calls.cancel=(calls.cancel or 0)+1 end}
     end
     return {}
 end,GetGameMode=function() return 'server-gamemode' end}
@@ -57,8 +64,14 @@ local controller=dofile(TEST_ROOT..'/Script/Blueprint/UGCPlayerController.lua')
 local server=object(controller,{HasAuthority=function() return true end})
 local client=object(controller,{HasAuthority=function() return false end})
 local desk={}
-assert(server:GetAvailableServerRPCs()=='ServerRequestDeskSearch')
-client:ServerRequestDeskSearch(desk); assert(#calls==0)
-server:ServerRequestDeskSearch(desk)
+local start,cancel=server:GetAvailableServerRPCs(); assert(start=='ServerRequestDeskSearch' and cancel=='ServerCancelDeskSearch')
+client:ServerRequestDeskSearch(desk,1); assert(#calls==0)
+server:ServerRequestDeskSearch(desk,1)
 assert(#calls==1 and calls[1].gm=='server-gamemode' and calls[1].desk==desk and calls[1].pc==server)
+server:ServerCancelDeskSearch(desk,0); assert(not calls.cancel)
+server:ServerCancelDeskSearch(desk,1); assert(calls.cancel==1)
+server:ServerRequestDeskSearch(desk,2); server:ServerCancelDeskSearch(desk,1); assert(calls.cancel==1)
+server:ServerCancelDeskSearch(desk,2); assert(calls.cancel==2)
+server:ServerCancelDeskSearch(desk,3); server:ServerRequestDeskSearch(desk,3)
+assert(#calls==2,'a cancel received before start must prevent a late start')
 print('PASS: local click/progress presentation and authority-only search start adapter')

@@ -5,6 +5,7 @@ local Config=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.InteractionCo
 local DeskClock=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskClock')
 local M={}
 local current=nil
+local holdSequence=0
 -- Ownership: the player controller lives for the whole local session while pawns come and
 -- go, so a controller-side watch loop decides when the layer runs. Hooking the pawn's
 -- ReceiveBeginPlay alone was measured to fail (PIE 2026-10-27: the first pawn started a
@@ -15,6 +16,14 @@ local monitorTimer=nil
 local LOG='[DeskFocus]'
 local function valid(o) return o~=nil and KismetSystemLibrary.IsValid(o) end
 local function log(text) ugcprint(LOG..' '..tostring(text)) end
+local function cancelHold(c)
+    local hold=c.hold
+    if not hold then return end
+    c.hold=nil
+    if valid(c.controller) and valid(hold.actor) then
+        UnrealNetwork.CallUnrealRPC(c.controller,c.controller,'ServerCancelDeskSearch',hold.actor,hold.sequence)
+    end
+end
 local function outline(actor,on)
     if valid(actor) then
         UGCGameSystem.DrawOutline(actor,on,Config.OutlineThickness,Config.OutlineColor)
@@ -48,11 +57,14 @@ local function selectDesk(c)
             -- the first blocking hit decides it: a wall or a prop in front also counts
             if not UE.IsA(actor,c.deskClass) then return nil end
             local s=actor.DeskState
-            if s and s.State=='Closed' and valid(actor.SearchArea) then
+            if actor.DeskRequireStanding and c.pawn.PoseState~=ESTEPoseState.Stand
+                and c.pawn.PoseState~=ESTEPoseState.Sprint then return nil end
+            if s and (s.State=='Closed' or (c.hold and c.hold.actor==actor
+                and s.State=='Searching' and s.SearchingPlayerId==c.key)) and valid(actor.SearchArea) then
                 local a=actor.SearchArea:K2_GetComponentLocation()
                 local b=c.pawn:K2_GetActorLocation()
                 local dx,dy,dz=a.X-b.X,a.Y-b.Y,a.Z-b.Z
-                local radius=actor.DeskInteractRadius or 180
+                local radius=math.min(actor.DeskInteractRadius or 180,actor.SearchArea:GetScaledSphereRadius())
                 if dx*dx+dy*dy+dz*dz<=radius*radius then return actor end
             end
             return nil
@@ -77,15 +89,30 @@ local function prepareWidget(c)
             widget:AddToViewport(20)
             widget:SetRequestHandler(function()
                 local actor=c.state.focus
-                if c.state:CanRequest() and valid(actor) then
+                if not c.hold and c.state:CanRequest() and valid(actor) then
+                    holdSequence=holdSequence+1
+                    c.hold={actor=actor,sequence=holdSequence,revision=actor.DeskState.Revision or 0}
                     log('requesting search through controller RPC')
-                    UnrealNetwork.CallUnrealRPC(c.controller,c.controller,'ServerRequestDeskSearch',actor)
+                    UnrealNetwork.CallUnrealRPC(c.controller,c.controller,'ServerRequestDeskSearch',actor,holdSequence)
                 end
-            end)
+            end,function() cancelHold(c) end)
             log('interaction widget prepared asynchronously')
         end)
     end)
     if not ok then log('async widget preparation failed: '..tostring(err)) end
+end
+
+function M.UpdateAnchor()
+    local c=current
+    if not c or not valid(c.widget) or not valid(c.display) then return end
+    local anchor=c.display.InteractionAnchor
+    if not valid(anchor) then
+        if not c.anchorWarned then log('interaction anchor missing'); c.anchorWarned=true end
+        c.widget:SetVisibility(ESlateVisibility.Collapsed)
+        return
+    end
+    local projected=c.widget:SetWorldAnchor(c.controller,anchor:K2_GetComponentLocation())
+    c.widget:SetVisibility(projected and ESlateVisibility.SelfHitTestInvisible or ESlateVisibility.Collapsed)
 end
 
 function M.Update()
@@ -101,12 +128,17 @@ function M.Update()
     end
     c.notReady=0
     local target=selectDesk(c)
+    if c.hold and target~=c.hold.actor then cancelHold(c) end
     if target~=c.state.focus then
         outline(c.state.focus,false)
         c.state:SetFocus(target)
         outline(target,true)
     end
     local display=c.state:DisplayTarget()
+    if display~=c.display then
+        c.display=display
+        if valid(c.widget) then c.widget:ResetWorldAnchor() end
+    end
     if not valid(display) or not valid(display.SearchArea) then
         if display then M.DeskRemoved(display) end
         if valid(c.widget) then c.widget:SetVisibility(ESlateVisibility.Collapsed) end
@@ -116,7 +148,7 @@ function M.Update()
     if not valid(widget) then return end
     local s=display.DeskState
     local active=c.state.active==display and s and s.State=='Searching' and s.SearchingPlayerId==c.key
-    widget:SetButtonVisible(not active and c.state:CanRequest())
+    widget:SetButtonVisible(c.hold~=nil or (not active and c.state:CanRequest()))
     if active then
         local duration=(s.SearchEndTime or 0)-(s.SearchStartTime or 0)
         local now=DeskClock.ApproxServerNow(c.pawn)
@@ -145,8 +177,7 @@ function M.Update()
             widget:SetProgress(nil)
         end
     else widget:SetProgress(nil) end
-    local projected=widget:SetWorldAnchor(c.controller,display.SearchArea:K2_GetComponentLocation())
-    widget:SetVisibility(projected and ESlateVisibility.SelfHitTestInvisible or ESlateVisibility.Collapsed)
+    M.UpdateAnchor()
 end
 
 function M.Begin(pawn)
@@ -166,6 +197,7 @@ function M.Begin(pawn)
         if valid(desk) then c.state:ApplyDeskState(desk,desk.DeskState) end
     end
     c.timer=UGCTimerUtility.CreateLuaTimer(Config.DetectInterval,function() M.Update() end,true)
+    c.anchorTimer=UGCTimerUtility.CreateLuaTimer(Config.PositionInterval,function() M.UpdateAnchor() end,true,'EscapeX.DeskFocus.Anchor')
     -- lifecycle evidence: without this a healthy run is indistinguishable from a layer
     -- that was never started, because every other log here is a failure path
     log('focus session started key='..tostring(key))
@@ -175,6 +207,13 @@ end
 function M.DeskChanged(actor,state)
     if not current then return end
     current.state:ApplyDeskState(actor,state)
+    if current.hold and current.hold.actor==actor and state then
+        if state.State=='Opening' or state.State=='Opened' then
+            current.hold=nil
+        elseif state.State=='Closed' and (state.Revision or 0)>current.hold.revision then
+            cancelHold(current)
+        end
+    end
     -- without this the OnRep -> focus-layer hop is invisible in a native run: every other
     -- log here is a failure path
     log('desk state reached focus layer: '..tostring(KismetSystemLibrary.GetObjectName(actor))
@@ -183,6 +222,7 @@ end
 
 function M.DeskRemoved(actor)
     if current then
+        if current.hold and current.hold.actor==actor then cancelHold(current) end
         if current.state.focus==actor then outline(actor,false) end
         current.state:Remove(actor)
     end
@@ -191,7 +231,9 @@ end
 function M.End()
     local c=current
     if not c then return end
+    cancelHold(c)
     if c.timer then UGCTimerUtility.RemoveLuaTimer(c.timer) end
+    if c.anchorTimer then UGCTimerUtility.RemoveLuaTimer(c.anchorTimer) end
     outline(c.state.focus,false)
     if valid(c.widget) then c.widget:RemoveFromParent() end
     if watched==c.pawn then watched=nil end

@@ -50,11 +50,14 @@ local function validate(actor,key,radius)
     if not UGCPlayerStateSystem.IsAlive(key) or UGCPlayerStateSystem.IsExit(key) then
         return false,'PLAYER_DEAD_OR_EXITED'
     end
+    if actor.DeskRequireStanding and pawn.PoseState~=ESTEPoseState.Stand
+        and pawn.PoseState~=ESTEPoseState.Sprint then return false,'NOT_STANDING' end
     if not valid(actor.SearchArea) then return false,'MISSING_SEARCH_AREA' end
     local point=actor.SearchArea:K2_GetComponentLocation()
     local pos=pawn:K2_GetActorLocation()
     local x,y,z=pos.X-point.X,pos.Y-point.Y,pos.Z-point.Z
-    if x*x+y*y+z*z>radius*radius then return false,'TOO_FAR' end
+    local areaRadius=actor.SearchArea:GetScaledSphereRadius()
+    if x*x+y*y+z*z>math.min(radius,areaRadius)^2 then return false,'TOO_FAR' end
     return true
 end
 

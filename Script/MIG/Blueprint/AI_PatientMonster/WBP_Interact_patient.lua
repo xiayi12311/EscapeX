@@ -8,12 +8,17 @@ function Widget:Construct()
     self:SetProgress(nil)
 end
 
-function Widget:SetRequestHandler(handler)
-    self.RequestHandler = handler
+function Widget:SetRequestHandler(pressed, released)
+    self.RequestHandler = pressed
+    self.ReleaseHandler = released
 end
 
-function Widget:OnSearchClicked()
+function Widget:OnSearchPressed()
     if self.RequestHandler then self.RequestHandler() end
+end
+
+function Widget:OnSearchReleased()
+    if self.ReleaseHandler then self.ReleaseHandler() end
 end
 
 function Widget:SetButtonVisible(visible)
@@ -46,12 +51,19 @@ function Widget:SetWorldAnchor(controller, point)
     local anchors, alignment, own = slot:GetAnchors(), slot:GetAlignment(), slot:GetSize()
     local x = projected.X - anchors.Minimum.X * size.X / scale - (0.5 - alignment.X) * own.X
     local y = projected.Y - anchors.Minimum.Y * size.Y / scale - (0.5 - alignment.Y) * own.Y
+    if self.LastAnchorX and math.abs(x-self.LastAnchorX)<4 and math.abs(y-self.LastAnchorY)<4 then return true end
     slot:SetPosition(Vector2D.New(x, y))
+    self.LastAnchorX,self.LastAnchorY=x,y
     return true
+end
+
+function Widget:ResetWorldAnchor()
+    self.LastAnchorX,self.LastAnchorY=nil,nil
 end
 
 function Widget:Destruct()
     self.RequestHandler = nil
+    self.ReleaseHandler = nil
 end
 
 return Widget

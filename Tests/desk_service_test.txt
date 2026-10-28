@@ -4,7 +4,10 @@ local now=0
 math.random=function() return 0 end
 local logs={}
 local pc={key=7}
-local pawn={K2_GetActorLocation=function() return {X=0,Y=0,Z=0} end}
+local pawnX=0
+local pawn={K2_GetActorLocation=function() return {X=pawnX,Y=0,Z=0} end}
+ESTEPoseState={Stand=0,Sprint=3,Crouch=1,Prone=2}
+pawn.PoseState=ESTEPoseState.Stand
 KismetSystemLibrary={IsValid=function(obj) return not obj.destroyed end}
 UGCPlayerStateSystem={IsAlive=function() return true end,IsExit=function() return false end}
 ugcprint=function(s) logs[#logs+1]=s end
@@ -35,9 +38,17 @@ service.Setup(gm); local first=gm.DeskSearchManager; service.Setup(gm)
 assert(gm.DeskSearchManager==first)
 -- Distance must use the actual interaction volume, even with an offset actor pivot.
 local a={K2_GetActorLocation=function() return {X=1000,Y=0,Z=0} end,
-    SearchArea={K2_GetComponentLocation=function() return {X=0,Y=0,Z=0} end}}
+    SearchArea={K2_GetComponentLocation=function() return {X=0,Y=0,Z=0} end,GetScaledSphereRadius=function() return 180 end}}
 assert(service.Register(gm,a,'A'))
 assert(a.DeskState.State=='Closed')
+a.DeskRequireStanding=true; pawn.PoseState=ESTEPoseState.Crouch
+local crouched,crouchReason=service.StartSearch(gm,a,pc)
+assert(not crouched and crouchReason=='NOT_STANDING')
+pawn.PoseState=ESTEPoseState.Stand
+pawnX=181
+local outside,reason=service.StartSearch(gm,a,pc)
+assert(not outside and reason=='TOO_FAR','outside SearchArea cannot start')
+pawnX=0
 -- Native AssignNew passes one FClick_Param, not separate PC/message arguments.
 local desk=dofile(TEST_ROOT..'/Script/Blueprint/Prefabs/Interactables/BP_SearchableDesk.lua')
 a.HasAuthority=function() return true end
@@ -47,6 +58,9 @@ desk.OnClickDeskSearch(a,{PlayerController=pc,Message=''})
 assert(a.DeskState.State=='Closed', 'old native click must no longer start searches')
 assert(service.StartSearch(gm,a,pc))
 assert(a.DeskState.State=='Searching')
+pawnX=181; callbacks['EscapeX.DeskSearch.Update']()
+assert(a.DeskState.State=='Closed','leaving SearchArea must cancel even inside cancel radius')
+pawnX=0; assert(service.StartSearch(gm,a,pc))
 assert(not desk.CheckDeskSearchNative(a,{PlayerController=pc,Message=''}))
 now=2.99; callbacks['EscapeX.DeskSearch.Update']()
 assert(a.DeskState.State=='Searching' and service.GetOpenedCount(gm)==0)
@@ -76,7 +90,7 @@ assert(service.ResetDesk(gm,a))
 local controller=dofile(TEST_ROOT..'/Script/Blueprint/UGCPlayerController.lua')
 pc.HasAuthority=function() return true end
 assert(controller:GetAvailableServerRPCs()=='ServerRequestDeskSearch')
-controller.ServerRequestDeskSearch(pc,a)
+controller.ServerRequestDeskSearch(pc,a,1)
 assert(a.DeskState.State=='Searching' and a.DeskState.SearchingPlayerId==7)
 assert(service.CancelPlayer(gm,pc,'TEST_DONE'))
 assert(service.Unregister(gm,a)); assert(not service.StartSearch(gm,a,pc))

@@ -3,6 +3,7 @@
 -- Docs/UnifiedInteraction_migration_plan.md); the plan requires a single source.
 return {
     DetectInterval = 0.1,          -- seconds between local focus scans
+    PositionInterval = 0.02,
     MonitorInterval = 0.25,        -- seconds between local-pawn identity checks
     TraceDistance = 350,           -- cm the crosshair ray may find a target
     OutlineThickness = 2,

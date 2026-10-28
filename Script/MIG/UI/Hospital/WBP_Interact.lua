@@ -3,7 +3,8 @@ local Button = {}
 
 function Button:Construct()
     if self.Button_Interact then
-        self.Button_Interact.OnClicked:Add(self.OnClicked, self)
+        self.Button_Interact.OnPressed:Add(self.OnPressed, self)
+        self.Button_Interact.OnReleased:Add(self.OnReleased, self)
     end
     if self.Image_Progress then self.ProgressMaterial = self.Image_Progress:GetDynamicMaterial() end
     self:SetProgress(0)
@@ -20,12 +21,19 @@ function Button:SetProgress(value)
     end
 end
 
-function Button:OnClicked()
-    if self.InteractionOwner then self.InteractionOwner:OnSearchClicked() end
+function Button:OnPressed()
+    if self.InteractionOwner then self.InteractionOwner:OnSearchPressed() end
+end
+
+function Button:OnReleased()
+    if self.InteractionOwner then self.InteractionOwner:OnSearchReleased() end
 end
 
 function Button:Destruct()
-    if self.Button_Interact then self.Button_Interact.OnClicked:Remove(self.OnClicked, self) end
+    if self.Button_Interact then
+        self.Button_Interact.OnPressed:Remove(self.OnPressed, self)
+        self.Button_Interact.OnReleased:Remove(self.OnReleased, self)
+    end
     self.InteractionOwner = nil
 end
 

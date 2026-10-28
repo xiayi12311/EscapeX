@@ -1,4 +1,5 @@
 ---@class BP_SearchableDesk_C:ActivityBaseActor
+---@field InteractionAnchor USceneComponent
 ---@field SearchClick UClickActorComponentBase
 ---@field SearchArea USphereComponent
 ---@field DeskContent UStaticMeshComponent
