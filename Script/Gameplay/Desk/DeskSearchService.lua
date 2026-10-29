@@ -2,6 +2,7 @@
 local Manager=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskSearchManager')
 local Config=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskOutcomeConfig')
 local DeskClock=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskClock')
+local TeacherSpawner=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskTeacherSpawner')
 local Service={}
 
 local function valid(obj)
@@ -81,7 +82,16 @@ function Service.Setup(gm)
                 if actor.OnDeskServerState then actor:OnDeskServerState(data,kind,reason) end
             end
             if kind=='Reset' or kind=='Removed' then cancelEffect(gm,actor)
-            elseif kind=='Opened' then scheduleEffects(gm,actor,data) end
+            elseif kind=='Opened' then
+                TeacherSpawner.OnCompleted(gm,data.CompletedSearchCount)
+                local action=Config.CountTriggers and Config.CountTriggers[data.CompletedSearchCount]
+                if action=='EnableSecondRoute' then
+                    TeacherSpawner.OnRouteMilestone(gm)
+                elseif action then
+                    log('Unknown count trigger '..tostring(action))
+                end
+                scheduleEffects(gm,actor,data)
+            end
             log(string.format('desk=%s version=%s interaction=%s state=%s event=%s reason=%s count=%d epoch=%d',
                 tostring(data.DeskId),tostring(data.ResetVersion),tostring(data.InteractionId),
                 tostring(data.State),kind,tostring(reason),gm.DeskSearchManager:GetOpenedCount(),

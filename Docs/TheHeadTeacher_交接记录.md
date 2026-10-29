@@ -65,9 +65,10 @@
 - 射线：怪物 Mesh 插槽 → 玩家 Mesh 插槽，`ECC_Visibility = 3`，忽略怪物自身；插槽缺失不判定可见。
 - 抓到处理走 `UGCGameSystem.ApplyDamage`，默认 300；保留原 `BPDie`。
 
-路线点（标签 `HT_Route`，排序 `HT_Route_001/002/003`）：(19210,27840,100)、(19210,29040,100)、(20410,29040,100)。
+路线点：预制体 `Asset/Blueprint/Prefabs/AI/BP_HTWaypoint`（拖入地图即为一个点；`RouteName` 分组、`RouteIndex` 顺序，同序号为一档、档内随机选点、末档回到首档循环，0 未设时按对象名排序；`WaitTime` 为到达后的停留秒数，0=不停留，停留期间朝该点箭头方向（点位 Actor 的 Yaw）；Marker 为 Arrow，游戏内隐藏、无碰撞）。收集：`HTCommon.routes` 每 `HTRouteRefreshInterval`（默认 2s）重建——按类扫描 `/EscapeX/Asset/Blueprint/Prefabs/AI/BP_HTWaypoint.BP_HTWaypoint_C`，并兼容旧地图手打标签 Actor（`HT_Route` / `HT_Route_NNN`）。分组开关：可选 `BP_HTRouteGroup`（`GroupName`/`RouteTag`/`bEnabled`）；有控制 Actor 的组只在该控制 `RouteTag` 匹配怪物 `HTRouteTag` 且 `bEnabled=true` 时巡逻，无控制 Actor 的组按旧规则（组名 == `HTRouteTag`）。因此运行中拖放/删除点位、勾选分组开关，最迟 2s 生效。旧坐标记录：(19210,27840,100)、(19210,29040,100)、(20410,29040,100)。
 
-场景：`HT_Navigation`（NavMeshBoundsVolume，中心 20000/28500/500，半范围 6000/6000/1000）、`HT_AIWorld`（中心 25200/25200/1000，半范围 25200/25200/2000）、`UAERecastNavMesh-Mannequin`。GameMode 含 `ESS_Navigation=33`、`ESS_MonsterCrowdMove=50`、`GMDataSource_Navigation`。
+场景（2026-10-29 在 `map init` 新图上重建）：`HT_Navigation`（NavMeshBoundsVolume，中心 15685/30670/1000，半范围 3800/3800/2000，覆盖玩法区：书桌/监狱柱/刷怪点/巡逻点）、`HT_AIWorld`（AIWorldVolume，中心 16555/17415/800，半范围 19500/20000/1800，覆盖全图，一图一个）、`UAERecastNavMesh-Mannequin`（随导航体积自动生成：`RuntimeGeneration=2` 动态、`bUGCDynNavData=true`、`bForceRebuildOnLoad=false`）。GameMode 含 `ESS_Navigation=33`、`ESS_MonsterCrowdMove=50`、`GMDataSource_Navigation`、`HTBuildNavigationOnStart=true`（开局 `AsyncBuildNavmesh(self,"Mannequin")`）。关卡已保存；未做编辑器「构建」烘焙，沿用运行时异步构建方案。
+环境雾（2026-10-29）：`HT_Fog`（ExponentialHeightFog，位于 15685/30670/1000）：`FogDensity=0.03`、`FogHeightFalloff=0.2`、`StartDistance=1500`、`FogMaxOpacity=0.9`，用于压缩玩家可视距离（约 5–8 十米外强衰减，近处不受影响）；参数收紧/放宽改密度即可，已随关卡保存。
 
 **测试掩体**：`HT_TestCover`（StaticMeshActor + `/Engine/BasicShapes/Cube`，缩放 (1,10,4)，中心 (20600,28740,300)），即 100×1000×400cm 南北向墙，夹在巡逻路线与玩家出生点 (20830,28740) 之间。
 
@@ -206,6 +207,25 @@
   - `revive-in-place.md`（TestAutoRevive 使用的复活接口链）
 - 本文件同步副本：工程内 `Docs/TheHeadTeacher_交接记录.md`。
 
-## 11. 一句话给接手人
+## 11. 2026-10-29 巡逻点资产化与分组实时开关（未实测）
+
+- 新资产（编辑器 Python 创建，配方见 `knowledge/recipes/blueprint-asset-scripting-limits.md`）：
+  - `Asset/Blueprint/Prefabs/AI/BP_HTWaypoint`：`RouteName`（string，默认 `HT_Route`）、`RouteIndex`（int，默认 0）；CDO 标签 `HT_Route`；Marker 为 ArrowComponent（游戏内默认隐藏、无碰撞），地图里可见一个箭头。
+  - `Asset/Blueprint/Prefabs/AI/BP_HTRouteGroup`：`GroupName`、`RouteTag`（均 string，默认 `HT_Route`）、`bEnabled`（bool，默认 true）；不带 `HT_Route` 标签，避免被当成路点收集。
+  - 两个 Lua 绑定 stub 由 `bp_lua_find_or_create` 生成于 `Script/Blueprint/Prefabs/AI/`，无外部依赖。
+  - 实例参数编辑：选中地图上的实例，在右侧细节面板的“巡逻点”（`RouteIndex`/`RouteName`/`WaitTime`）或“巡逻分组”（`GroupName`/`RouteTag`/`bEnabled`）分组里改。**注意**：脚本新增的蓝图变量默认带“私有”标志（`PropertyFlags` 含 `0x10000`），会导致实例细节面板不显示这些参数；本资产已清除该位并编译保存（踩坑记录见 `knowledge/recipes/blueprint-asset-scripting-limits.md` 第七节）。
+- `HTCommon.routes` 改为节流重建（`HTRouteRefreshInterval`，默认 2s，可由怪物蓝图变量覆盖）：按类扫描预制体 + 旧标签 Actor 去重合并；顺序 = `RouteIndex>0`，否则回退 `HT_Route_NNN` 标签，再按对象名；空结果也缓存，避免每帧全量扫描。
+- 走点规则（2026-10-29 晚按用户要求调整）：相同序号视为同一“档”，到达某档后、进入下一档时在该档内**随机**选一点（刚到达的点在有其他候选时排除）；到达末档后下一个目标是**首档**，路线循环（不再原路往返）；全局只有一个档时在同档点间随机游走，只有一个点时原地停留。随机用 `math.random`，未显式播种。
+- 到点停留（2026-10-29 追加）：`BP_HTWaypoint.WaitTime`（float，秒，0=不停留）。到达后在点旁停止移动，并每帧朝该点箭头方向（点位 Actor 的 Yaw，`K2_SetActorRotation` 设到怪物上）；等待期间检测扫描照常进行（能发现玩家并被拖入追逐）；`WaitTime` 结束才进入下一档。追逐/中止会结束等待（`ReceiveAbortAI` 与重新进入巡逻时重置状态）；当前点被删也会取消等待。`Return` 任务不等待。
+- PIE 实测（2026-10-29，会话 `dkcx30kxa3te84`，单机）：导航开局构建成功（`navBuilding=false`、Rebuilt 触发点投影导航网格成功、全程无 `Navigation stalled`）；`GetUGCResourcesFullPath('Asset/.../BP_EffectTriggerSkeletal_Rebuilt.BP_EffectTriggerSkeletal_Rebuilt_C')` 返回正确全路径且 `UE.LoadClass` 得到有效类；DeskTeacherSpawner 刷出班主任后巡逻收集到 4 个路点，运行时写入 RouteIndex=1..4 后按序循环（含 4→1 回首档），`WaitTime=4` 实测停留约 4.0s，停留朝向与该点箭头 Yaw 一致（实测 -180/90/90），`WaitTime=0` 的点不停留；追逐/抓取/返回链路自然触发正常。**注意**：实测的 RouteIndex/WaitTime 是运行时写入，地图数据仍是默认值（0/0），正式使用需在地图实例上配置序号并保存。
+- 第二组巡逻点（2026-10-29）：地图新增 7 个点 `RouteName='HT_Route1'`（RouteIndex 1/2 两档），控制 Actor `BP_HTRouteGroup2`（GroupName=`HT_Route1`，`RouteTag` 已改为 `HT_Route` 以匹配班主任标签，初始 `bEnabled=false`）。课桌搜索进度第 7 次解锁：`DeskOutcomeConfig.CountTriggers={[7]='EnableSecondRoute'}`，`DeskSearchService` 在 `Opened` 事件里分发，`DeskTeacherSpawner.OnRouteMilestone` 调 `HTCommon.setGroupEnabled(班主任,'HT_Route1',true)`（老师未刷出时记 `DeskSecondRoutePending`，刷出后补启用）；第一组保持启用，两组路线合并，第二组 1/2 档优先、第一组（RouteIndex 全 0）落在末档随机。<br>现有 5/10 次纸条事件仍在 `FixedSearchOutcomes`，两套配置互不影响。
+- 班主任骨架动画（2026-10-29）：`TheHeadTeacher` 的 `AnimListComp.GameplayTagAnimDataListDefault` 原来挂的是僵尸动画（与 ZYZCJY 网格的 `CH_Base_SK_Skeleton` 不匹配，条目上 `ErrorDisplayInfo=动画资源与Mesh不匹配！`），已替换为同骨架资源：`Move.Relax`/`Move.Battle`→`BS_Unarmed_Stand_Idle-Run-Sprint`（BlendSpace）、`Idle.Relax`/`Idle.Battle`→`Unarmed_Stand_Base`、`Hurt`→`Unarmed_Stand_Hit_Head_F`、`Die`→`Rifle_Stand_Death_Montage`（同为 CH_Base 骨架）；写入方式：`条目.ref().set_field('AnimAsset', 对象)` + `AnimListComp.modify()` + `bp.save_package()`（不编译），已用 uasset 二进制确认新旧引用替换。环境雾 `HT_Fog` 见第 3 节。
+- 分组语义（`groupStates`）：某组只要存在任一 `BP_HTRouteGroup` 控制即视为“受控”——仅当该控制 `RouteTag` 为空或等于怪物 `HTRouteTag` 且 `bEnabled=true` 时，本怪才巡逻该组；无控制的组按旧规则（组名 == `HTRouteTag` 才默认开启）。多怪分工：不同怪用不同 `HTRouteTag`，组控制里写对应 `RouteTag`。
+- 实时性：巡逻/返回 tick 各自调用 `routes()`，刷新后序号自动收敛（`d.index` 钳制）；当前路点被删时先停并打 `route-deleted`，2s 内重建后继续。运行期切换分组用 `HTCommon.setGroupEnabled(p, 组名, enabled布尔值)`——写组控制实例（服务端）的 `bEnabled` 并强制下一 tick 重建；编辑器里改地图、勾选 `bEnabled` 只在下一次 PIE 生效（PIE 运行的是启动时快照），运行中的增删需由 Lua 生成/销毁 Actor 才会被刷新捕获。`Return` 的“最近点”在进入任务时选定，组中途关闭不会改已选返航点。
+- 修复（2026-10-29）：`M.next` 原用 `math.huge` 作为“未找到更高档”哨兵，而 `RouteIndex=0` 的点的序值本身就是 `math.huge`，导致存在其它档时这些点永远选不中（表现为第二组解锁后班主任不再回旧巡逻点）；改为 `found` 标志判断，`math.huge` 作为合法档正常参与“下一档/回首档”。
+- 未验证：PIE 实际表现（用户指示暂不测试）；DS 上蓝图类 `LoadClass` 可用性（失败会打 `prefab-class` 日志并回退纯标签路径）；`RouteIndex` 全为 0 时的排序依赖对象名，属预期。
+- 现状：`962baa3 "map init"` 之后新地图里没有班主任实例、导航体积（`HT_Navigation`/`RecastNavMesh`）与任何巡逻点；恢复巡逻需在新地图放 1 个班主任、导航体积和若干 `BP_HTWaypoint`（必要时加 `BP_HTRouteGroup`）。
+
+## 12. 一句话给接手人
 
 先做第 8 节的遮挡复测（这是唯一还没端到端验证的修复）；期间盯 `[HT_TRACE]` 的 `vis_*`、`catch_*` 行；确认后再关埋点、按团队分支规范把班主任改动与 SearchableDesk 分开提交。

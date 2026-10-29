@@ -7,6 +7,9 @@ M.Defaults = {
     HTWaypointRadius = 50, HTDiagnosticInterval = 5,
     HTAttachSocket = "headSocket", HTSourceSocket = "headSocket",
     HTTargetBoundsHeightRatio = 0.75, HTRouteTag = "HT_Route",
+    HTWaypointClass = "Asset/Blueprint/Prefabs/AI/BP_HTWaypoint.BP_HTWaypoint_C",
+    HTGroupClass = "Asset/Blueprint/Prefabs/AI/BP_HTRouteGroup.BP_HTRouteGroup_C",
+    HTRouteRefreshInterval = 2,
     HTSightChannel = 3, HTDebug = false,
     HTConePitch = 0, HTConeYaw = -171.49657, HTConeRoll = -90,
     -- The catch re-check reuses the distance measured when the chase decided; this
@@ -33,7 +36,7 @@ end
 
 function M.data(p)
     if not p.HTRuntime then
-        p.HTRuntime = {index = 1, direction = 1, clock = 0, logs = {}}
+        p.HTRuntime = {index = 1, clock = 0, logs = {}}
     end
     return p.HTRuntime
 end
@@ -251,28 +254,139 @@ function M.scan(p)
     return selected,visible
 end
 
+-- Route points are collected fresh every HTRouteRefreshInterval so placing,
+-- deleting or switching groups in the map takes effect live. Sources: prefab
+-- instances of HTWaypointClass, grouped by their RouteName variable, plus legacy
+-- level actors carrying the HTRouteTag (pre-prefab maps keep working unchanged).
+-- Group enablement comes from HTGroupClass control actors: a group is patrolled by
+-- this monster when some control has RouteTag == HTRouteTag (empty RouteTag counts
+-- as matching) and bEnabled true; a group with no control actor at all stays on
+-- when its name equals HTRouteTag, otherwise it belongs to whichever monster's tag
+-- controls it. Ordering: RouteIndex > 0 wins; then the legacy HT_Route_%d tag;
+-- everything unordered falls to the end, tie-broken by object name.
+local loadedClasses, classRetryAt = {}, 0
+
+function M.classOf(p, key)
+    local path = M.config(p, key)
+    if type(path) ~= 'string' or path == '' then return nil end
+    local cached = loadedClasses[path]
+    if cached then return cached end
+    if classRetryAt > 0 and M.data(p).clock < classRetryAt then return nil end
+    local ok, cls = pcall(function()
+        return UGCObjectUtility.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(path))
+    end)
+    if ok and cls ~= nil then
+        loadedClasses[path] = cls
+        return cls
+    end
+    classRetryAt = M.data(p).clock + 10
+    M.log(p, "prefab-class", "Prefab class unavailable: " .. path .. "; route falls back to tags")
+    return nil
+end
+
+local function groupName(p, a)
+    local n = a.RouteName
+    if type(n) == 'string' and n ~= '' then return n end
+    return M.config(p, "HTRouteTag")
+end
+
+-- group name -> managed?/enabled? for this monster's tag. A group with ANY control
+-- actor is managed: it is patrolled only while a control whose RouteTag matches
+-- (empty = matches all) is enabled. A group with no control actor at all falls back
+-- to the legacy rule: on for the monster whose HTRouteTag equals the group name.
+local function groupStates(p, tag)
+    local states = {}
+    local cls = M.classOf(p, "HTGroupClass")
+    if not cls then return states end
+    for _,g in pairs(UGCActorComponentUtility.GetAllActorsOfClass(p, cls) or {}) do
+        if M.valid(g) then
+            local name = tostring(g.GroupName or '')
+            if name ~= '' then
+                if states[name] == nil then states[name] = false end
+                local gt = tostring(g.RouteTag or '')
+                if (gt == '' or gt == tag) and g.bEnabled == true then
+                    states[name] = true
+                end
+            end
+        end
+    end
+    return states
+end
+
+-- Order value groups points into tiers: equal values are one tier, and a patrol
+-- reaches one randomly chosen point of the next tier at a time.
+local function routeOrder(a)
+    local n = a.RouteIndex
+    if type(n) == 'number' and n > 0 then return n end
+    for _,value in pairs(a.Tags or {}) do
+        local m=string.match(tostring(value),"^HT_Route_(%d+)$")
+        if m then return tonumber(m) end
+    end
+    return math.huge
+end
+
+-- Runtime switch used by gameplay code (or the Lua console) to turn one route
+-- group on/off on this monster's server copy of the control actor. The route list
+-- rebuilds on the next tick instead of waiting for the refresh timer.
+function M.setGroupEnabled(p, name, enabled)
+    local cls = M.classOf(p, "HTGroupClass")
+    if not cls then return false end
+    local tag, hits = M.config(p, "HTRouteTag"), 0
+    for _,g in pairs(UGCActorComponentUtility.GetAllActorsOfClass(p, cls) or {}) do
+        if M.valid(g) and tostring(g.GroupName or '') == name then
+            local gt = tostring(g.RouteTag or '')
+            if gt == '' or gt == tag then
+                g.bEnabled = enabled and true or false
+                hits = hits + 1
+            end
+        end
+    end
+    if hits > 0 then
+        M.data(p).routeAt = nil
+        ugcprint(string.format("[HeadTeacher] group %s -> %s (%d control)",
+            name, tostring(enabled and true or false), hits))
+    end
+    return hits > 0
+end
+
 function M.routes(p)
     local d,tag=M.data(p),M.config(p,"HTRouteTag")
-    if d.route and d.routeTag==tag then return d.route end
-    local all = GameplayStatics.GetAllActorsWithTag(p,tag,{})
-    local route = {}
-    for _,a in pairs(all or {}) do
-        if M.valid(a) then route[#route+1] = a end
+    if d.route and d.routeTag==tag and d.clock < (d.routeAt or -1) + M.config(p,"HTRouteRefreshInterval") then
+        return d.route
     end
-    local function order(a)
-        for _,value in pairs(a.Tags or {}) do
-            local n=string.match(tostring(value),"^HT_Route_(%d+)$")
-            if n then return tonumber(n) end
+    local pts, seen = {}, {}
+    local function collect(list)
+        for _,a in pairs(list or {}) do
+            if M.valid(a) and not seen[a] then
+                seen[a] = true
+                pts[#pts+1] = a
+            end
         end
-        return math.huge
+    end
+    local wcls = M.classOf(p, "HTWaypointClass")
+    if wcls then collect(UGCActorComponentUtility.GetAllActorsOfClass(p, wcls)) end
+    collect(GameplayStatics.GetAllActorsWithTag(p,tag,{}))
+
+    local states = groupStates(p, tag)
+    local route = {}
+    for _,a in ipairs(pts) do
+        local name = groupName(p, a)
+        local on = states[name]
+        if on == nil then on = (name == tag) end
+        if on then route[#route+1] = a end
     end
     table.sort(route,function(a,b)
-        local ia,ib=order(a),order(b)
+        local ia,ib=routeOrder(a),routeOrder(b)
         if ia~=ib then return ia<ib end
         return KismetSystemLibrary.GetObjectName(a) < KismetSystemLibrary.GetObjectName(b)
     end)
-    if #route == 0 then M.log(p,"route","No route actors tagged "..M.config(p,"HTRouteTag")) end
-    if #route>0 then d.route,d.routeTag=route,tag end
+    if d.routeCount and d.routeCount ~= #route then
+        ugcprint(string.format("[HeadTeacher] route size %d -> %d", d.routeCount, #route))
+    end
+    if #route == 0 then
+        M.log(p,"route","No route actors for "..tag)
+    end
+    d.route,d.routeTag,d.routeAt,d.routeCount = route,tag,d.clock,#route
     return route
 end
 
@@ -285,10 +399,65 @@ function M.arrived(p,point)
     return M.distance(M.feet(p),point:K2_GetActorLocation()) <= M.config(p,"HTWaypointRadius")
 end
 
-function M.advance(index,direction,count)
-    if count <= 1 then return 1,direction end
-    if index >= count then direction = -1 elseif index <= 1 then direction = 1 end
-    return index+direction,direction
+-- Face the waypoint's arrow: the marker carries no relative rotation, so the
+-- waypoint actor's own yaw is the direction the designer pointed at.
+function M.face(p, point)
+    local rot = point:K2_GetActorRotation()
+    p:K2_SetActorRotation({Pitch=0, Yaw=rot.Yaw, Roll=0}, true)
+end
+
+-- Seconds to stay at this point; unset or <= 0 means no wait. Legacy tagged
+-- actors have no WaitTime property and read as nil.
+function M.waitTime(point)
+    local w = point.WaitTime
+    if type(w) == 'number' and w > 0 then return w end
+    return 0
+end
+
+-- Next target after arriving at route[index]: the lowest order value above the
+-- current point's, or the first tier again after the last one (the route cycles,
+-- it does not walk back). Points sharing an order value form one tier and one of
+-- them is picked at random; the point just reached is excluded when other
+-- candidates exist, so a tier of two or more keeps moving.
+function M.next(route,index)
+    local current, count = route[index], #route
+    if not current or count <= 1 then return index end
+    local cur = routeOrder(current)
+    local function pick(candidates)
+        if #candidates <= 1 then return candidates[1] or index end
+        local moving = {}
+        for _,i in ipairs(candidates) do
+            if route[i] ~= current then moving[#moving+1] = i end
+        end
+        if #moving > 0 then candidates = moving end
+        return candidates[math.random(#candidates)]
+    end
+    -- math.huge is a legal tier (points with no RouteIndex), so "found" must be
+    -- tracked explicitly; comparing against a math.huge sentinel would skip it.
+    local target, found = math.huge, false
+    for _,a in ipairs(route) do
+        local o = routeOrder(a)
+        if o > cur and (not found or o < target) then
+            target, found = o, true
+        end
+    end
+    if found then
+        local tier = {}
+        for i,a in ipairs(route) do
+            if routeOrder(a) == target then tier[#tier+1] = i end
+        end
+        return pick(tier)
+    end
+    local first = math.huge
+    for _,a in ipairs(route) do
+        local o = routeOrder(a)
+        if o < first then first = o end
+    end
+    local tier = {}
+    for i,a in ipairs(route) do
+        if routeOrder(a) == first then tier[#tier+1] = i end
+    end
+    return pick(tier)
 end
 
 function M.stop(p)

@@ -18,6 +18,7 @@
 ---@field EffectCooldown float
 ---@field EffectSoundPath FString
 ---@field EffectEnabled bool
+local function NewTriggerClass()
 local Trigger = {}
 
 local function valid(o)
@@ -121,7 +122,11 @@ function Trigger:ReceiveEndPlay(reason)
     Trigger.SuperClass.ReceiveEndPlay(self, reason)
 end
 
+Trigger.NewClass = NewTriggerClass
 return Trigger
+end
+
+return NewTriggerClass()
 
 
 

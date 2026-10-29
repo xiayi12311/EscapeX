@@ -13,7 +13,7 @@ local function snapshot(d)
         State=d.state, SearchingPlayerId=d.player, SearchStartTime=d.startTime,
         SearchEndTime=d.endTime, FinalOutcomeId=d.outcome, OpenEventId=d.event,
         OpenStartTime=d.openTime, OpenDuration=d.openDuration, RevealOffset=d.revealOffset,
-        CounterEpoch=d.epoch, SearcherPlayerId=d.searcher}
+        CounterEpoch=d.epoch, SearcherPlayerId=d.searcher, CompletedSearchCount=d.completedCount}
 end
 
 function Manager:publish(d, kind, reason)
@@ -115,7 +115,7 @@ function Manager:CompleteSearch(id,version,interaction)
     d.event=tostring(d.id)..':'..d.version..':'..d.interaction
     d.searcher=d.player
     d.epoch=self.CounterEpoch; d.openTime=now
-    d.state='Opening'; self.TotalOpenedCount=nextCount
+    d.state='Opening'; self.TotalOpenedCount=nextCount; d.completedCount=nextCount
     self:release(d)
     self:publish(d,'Opened')
     return true,d.outcome,nextCount
@@ -154,7 +154,7 @@ function Manager:ResetDesk(actor)
     local candidate=self.deps.roll(d.pool)
     if not candidate then return false,'EMPTY_OUTCOME_POOL' end
     self:release(d); d.version=d.version+1; d.state='Closed'
-    d.candidate=candidate; d.outcome=nil; d.event=nil; d.openTime=nil; d.epoch=nil; d.searcher=nil
+    d.candidate=candidate; d.outcome=nil; d.event=nil; d.openTime=nil; d.epoch=nil; d.searcher=nil; d.completedCount=nil
     self:publish(d,'Reset')
     return true
 end

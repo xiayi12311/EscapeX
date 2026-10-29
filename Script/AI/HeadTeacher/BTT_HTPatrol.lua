@@ -4,6 +4,7 @@ function T:ReceiveExecuteAI(_,p)
     if not H.begin(self,p,"Patrol") then return end
     self.ScanElapsed = 100
     self.VisibleSince = {}
+    self.WaitTime, self.WaitElapsed = nil, nil
     H.traceEvent(string.format("patrol_enter lock=%s %s", tostring(H.valid(H.target(p))), H.snapshot(p,H.target(p))))
     -- A tree restart must not replace a lock left by an interrupted chase.
     if H.valid(H.target(p)) then
@@ -23,6 +24,7 @@ function T:ReceiveTickAI(_,p,dt)
     if not H.valid(route[d.index]) then
         H.log(p,"route-deleted","Current route waypoint was deleted; waiting for route repair")
         self.VisibleSince={}
+        self.WaitTime, self.WaitElapsed = nil, nil
         H.stop(p); return
     end
     self.ScanElapsed = self.ScanElapsed+dt
@@ -57,8 +59,25 @@ function T:ReceiveTickAI(_,p,dt)
             return
         end
     end
-    if H.arrived(p,route[d.index]) then
-        d.index,d.direction=H.advance(d.index,d.direction,#route)
+    if self.WaitTime then
+        -- Stay at this point, facing its arrow, until the configured time passes.
+        self.WaitElapsed = (self.WaitElapsed or 0) + dt
+        if self.WaitElapsed < self.WaitTime then
+            H.stop(p)
+            H.face(p,route[d.index])
+            return
+        end
+        self.WaitTime, self.WaitElapsed = nil, nil
+        d.index = H.next(route,d.index)
+    elseif H.arrived(p,route[d.index]) then
+        local wait = H.waitTime(route[d.index])
+        if wait > 0 then
+            self.WaitTime, self.WaitElapsed = wait, 0
+            H.stop(p)
+            H.face(p,route[d.index])
+            return
+        end
+        d.index=H.next(route,d.index)
     end
     H.moveTick(self,p,route[d.index]:K2_GetActorLocation(),H.config(p,"HTPatrolSpeed"),dt)
 end
@@ -66,6 +85,7 @@ function T:ReceiveAbortAI(_,p)
     H.traceEvent(string.format("patrol_abort %s", H.snapshot(p,H.target(p))))
     p.HTDetectionEnabled=false
     self.VisibleSince={}
+    self.WaitTime, self.WaitElapsed = nil, nil
     H.abort(self,p)
 end
 return T
