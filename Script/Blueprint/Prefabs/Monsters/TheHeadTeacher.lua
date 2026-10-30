@@ -1,4 +1,7 @@
 ---@class TheHeadTeacher_C:BP_UGC_GenericMobPawn_Base_C
+---@field Hair UStaticMeshComponent
+---@field Face UStaticMeshComponent
+---@field Neck UStaticMeshComponent
 ---@field HTProximityArea USphereComponent
 ---@field SpotLight USpotLightComponent
 ---@field RedLightMesh UStaticMeshComponent
@@ -28,6 +31,7 @@
 ---@field HTDetectionDelay float
 --Edit Below--
 local TheHeadTeacher = {}
+local destroyEnemyArrow
 
 -- function TheHeadTeacher:ReceiveBeginPlay()
 --     TheHeadTeacher.SuperClass.ReceiveBeginPlay(self)
@@ -98,6 +102,8 @@ function TheHeadTeacher:BPDie(KillingDamage, EventInstigator, DamageCauser, Dama
     if self:HasAuthority() then
         -- 只有服务端才可以掉落
         self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
+    else
+        destroyEnemyArrow(self)
     end
 end
 
@@ -143,10 +149,51 @@ end
 local H = UGCGameSystem.UGCRequire("Script.AI.HeadTeacher.HTCommon")
 local C = UGCGameSystem.UGCRequire("Script.AI.HeadTeacher.HTCapture")
 local Presentation = UGCGameSystem.UGCRequire("Script.Gameplay.Capture.CapturePresentation")
+local ENEMY_ARROW_CLASS_PATH = '/EscapeX/Asset/UI/EnemyArrow/WBP_HTEnemyArrow.WBP_HTEnemyArrow_C'
+
+destroyEnemyArrow = function(owner)
+    owner.EnemyArrowGeneration = (owner.EnemyArrowGeneration or 0) + 1
+    owner.EnemyArrowCreatePending = false
+    local widget = owner.EnemyArrowWidget
+    owner.EnemyArrowWidget = nil
+    if widget and KismetSystemLibrary.IsValid(widget) then
+        UGCWidgetUtility.DestroyWidget(widget)
+    end
+end
+
+local function createEnemyArrow(owner)
+    if owner.EnemyArrowWidget or owner.EnemyArrowCreatePending then
+        return
+    end
+
+    local generation = (owner.EnemyArrowGeneration or 0) + 1
+    owner.EnemyArrowGeneration = generation
+    owner.EnemyArrowCreatePending = true
+    UGCWidgetUtility.CreateWidgetAsync(ENEMY_ARROW_CLASS_PATH, function(widget)
+        owner.EnemyArrowCreatePending = false
+        if not KismetSystemLibrary.IsValid(owner)
+            or owner.EnemyArrowGeneration ~= generation
+            or owner.EnemyArrowWidget then
+            if widget and KismetSystemLibrary.IsValid(widget) then
+                UGCWidgetUtility.DestroyWidget(widget)
+            end
+            return
+        end
+        if not widget or not KismetSystemLibrary.IsValid(widget) then
+            return
+        end
+        owner.EnemyArrowWidget = widget
+        widget:SetTargetActor(owner)
+        widget:AddToViewport(20)
+    end)
+end
 
 -- Synced so the carried player's own client can attach its pawn locally; a
 -- server-only attach does not move them on their screen (measured 2026-10-26).
-TheHeadTeacher.HTCaptureState = {PlayerKey = -1, Stage = "None", Revision = 0}
+TheHeadTeacher.HTCaptureState = {
+    PlayerKey = -1, Stage = "None", Revision = 0,
+    VisionSignature = "0", VisionPlayerKeys = "",
+}
 
 function TheHeadTeacher:ReceiveBeginPlay()
     TheHeadTeacher.SuperClass.ReceiveBeginPlay(self)
@@ -160,6 +207,9 @@ function TheHeadTeacher:ReceiveBeginPlay()
     elseif self.HTCaptureState then
         -- Late join: apply whatever the server already published for this monster.
         Presentation.Carrier(self, self.HTCaptureState)
+    end
+    if not self:HasAuthority() then
+        createEnemyArrow(self)
     end
 end
 
@@ -197,6 +247,7 @@ function TheHeadTeacher:ReceiveEndPlay(Reason)
         C.cancel(self, 'MONSTER_DESTROYED')
     else
         Presentation.End(self)
+        destroyEnemyArrow(self)
     end
     TheHeadTeacher.SuperClass.ReceiveEndPlay(self, Reason)
 end

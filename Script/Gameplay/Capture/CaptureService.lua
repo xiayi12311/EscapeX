@@ -228,12 +228,16 @@ local function publishMonster(monster, data)
         -- another session's state.
         if current and current.SessionId and current.SessionId ~= data.SessionId then return end
         monster.HTCaptureState = {PlayerKey = -1, Stage = 'None', SessionId = -1,
-            Revision = data.Revision}
+            Revision = data.Revision,
+            VisionSignature = current and current.VisionSignature,
+            VisionPlayerKeys = current and current.VisionPlayerKeys}
         return
     end
     monster.HTCaptureState = {
         SessionId = data.SessionId, PlayerKey = data.PlayerKey, PostId = data.PostId,
         Stage = data.State, Revision = data.Revision, CarrySocket = data.CarrySocket,
+        VisionSignature = current and current.VisionSignature,
+        VisionPlayerKeys = current and current.VisionPlayerKeys,
     }
 end
 
