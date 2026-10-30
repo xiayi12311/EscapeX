@@ -19,12 +19,18 @@ end
 function T:ReceiveTickAI(_,p,dt)
     H.progress(p,dt)
     local route, d = H.routes(p), H.data(p)
-    if #route == 0 then self.VisibleSince={}; H.stop(p); return end
+    if #route == 0 then
+        self.VisibleSince={}
+        H.publishVision(p,{})
+        H.stop(p)
+        return
+    end
     d.index = math.max(1, math.min(d.index,#route))
     if not H.valid(route[d.index]) then
         H.log(p,"route-deleted","Current route waypoint was deleted; waiting for route repair")
         self.VisibleSince={}
         self.WaitTime, self.WaitElapsed = nil, nil
+        H.publishVision(p,{})
         H.stop(p); return
     end
     self.ScanElapsed = self.ScanElapsed+dt
@@ -86,6 +92,7 @@ function T:ReceiveAbortAI(_,p)
     p.HTDetectionEnabled=false
     self.VisibleSince={}
     self.WaitTime, self.WaitElapsed = nil, nil
+    H.publishVision(p,{})
     H.abort(self,p)
 end
 return T

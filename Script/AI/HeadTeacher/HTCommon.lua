@@ -215,13 +215,13 @@ function M.busyPlayer(key)
     return busy == true
 end
 
-function M.scan(p)
+function M.visionCandidates(p)
     local cone = p.RedLightMesh
-    if not M.setupCone(p) then return nil,{} end
+    if not M.setupCone(p) then return nil,nil end
     local near=p.HTProximityArea
     if not M.valid(near) then
         M.log(p,'proximity-area','HTProximityArea is missing; detection disabled')
-        return nil,{}
+        return nil,nil
     end
     near:SetCollisionEnabled(p:HasAuthority() and 1 or 0)
     near:SetCollisionResponseToAllChannels(0)
@@ -232,12 +232,62 @@ function M.scan(p)
         cone, cone:K2_GetComponentToWorld(), {ESceneQueryType.PlayerPawn}, nil, {p})
     local nearby = UGCActorComponentUtility.GetOverlappingActorsWithPrimitiveComponent(
         near, near:K2_GetComponentToWorld(), {ESceneQueryType.PlayerPawn}, nil, {p})
+    return candidates or {}, nearby or {}
+end
+
+local function containsActor(actors, target)
+    for _,actor in pairs(actors or {}) do
+        if actor == target then return true end
+    end
+    return false
+end
+
+function M.canSee(p, target, candidates, nearby)
+    if not M.valid(target) then return false end
+    if not candidates or not nearby then
+        candidates, nearby = M.visionCandidates(p)
+    end
+    if not candidates or not nearby then return false end
+    if not (containsActor(candidates,target) or containsActor(nearby,target)) then
+        return false
+    end
+    local key = UGCGameSystem.GetPlayerKeyByPlayerPawn(target)
+    return M.alive(target) and not M.busyPlayer(key) and M.visible(p,target)
+end
+
+function M.publishVision(p, visible)
+    if not p:HasAuthority() then return end
+    local keys = {}
+    for _,entry in ipairs(visible or {}) do
+        local key = entry.key
+        if key == nil then
+            key = UGCGameSystem.GetPlayerKeyByPlayerPawn(entry.actor or entry)
+        end
+        if key ~= nil and key ~= -1 then keys[#keys+1] = key end
+    end
+    table.sort(keys)
+    local signature = table.concat(keys, ",")
+    local current = p.HTCaptureState or {}
+    if current.VisionPlayerKeys == signature then return end
+    local nextState = {}
+    for key,value in pairs(current) do nextState[key] = value end
+    nextState.VisionSignature = tostring((tonumber(current.VisionSignature) or 0) + 1)
+    nextState.VisionPlayerKeys = signature
+    p.HTCaptureState = nextState
+end
+
+function M.scan(p)
+    local candidates, nearby = M.visionCandidates(p)
+    if not candidates or not nearby then
+        M.publishVision(p,{})
+        return nil,{}
+    end
     local seen, visible = {}, {}
     local function collect(target)
         if not seen[target] and M.alive(target) then
             seen[target] = true
             local key = UGCGameSystem.GetPlayerKeyByPlayerPawn(target)
-            if not M.busyPlayer(key) and M.visible(p,target) then
+            if M.canSee(p,target,candidates,nearby) then
                 visible[#visible+1] = {actor=target,
                     distance=M.distance(p:K2_GetActorLocation(),target:K2_GetActorLocation()),
                     key=key}
@@ -250,6 +300,7 @@ function M.scan(p)
         if a.distance == b.distance then return a.key < b.key end
         return a.distance < b.distance
     end)
+    M.publishVision(p,visible)
     local selected=visible[1] and visible[1].actor or nil
     return selected,visible
 end
