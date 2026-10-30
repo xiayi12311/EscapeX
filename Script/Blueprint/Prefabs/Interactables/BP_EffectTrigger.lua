@@ -1,4 +1,8 @@
 ---@class BP_EffectTrigger_C:ActivityBaseActor
+---@field SkeletalMesh2 USkeletalMeshComponent
+---@field SkeletalMesh1 USkeletalMeshComponent
+---@field SkeletalMesh USkeletalMeshComponent
+---@field Scene USceneComponent
 ---@field EffectSequence UActorSequenceComponent
 ---@field EffectMesh UStaticMeshComponent
 ---@field TriggerArea UBoxComponent
