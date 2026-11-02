@@ -4,6 +4,7 @@
 local Manager = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureManager')
 local Config = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureConfig')
 local HT = UGCGameSystem.UGCRequire('Script.AI.HeadTeacher.HTCommon')
+local Presentation = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CapturePresentation')
 local Service = {}
 
 local LOG = '[HTCapture]'
@@ -303,6 +304,7 @@ local function emit(data, kind, reason, post, monster)
             return
         end
         setInvincible(pawn, true)
+        Presentation.SetConcealed(pawn, true)
     elseif kind == 'Carrying' then
         setSimulatedMovement(pawn, false)
         local ok, err = attach(pawn, monster, data.CarrySocket)
@@ -316,6 +318,7 @@ local function emit(data, kind, reason, post, monster)
         end
     elseif kind == 'Imprisoned' then
         detach(pawn)
+        Presentation.SetConcealed(pawn, false)
         local ok, err = attach(pawn, post and post.actor or nil, nil)
         if not ok then
             -- A post without a usable bind point cannot hold anyone: say so and let
@@ -330,6 +333,7 @@ local function emit(data, kind, reason, post, monster)
             return
         end
     elseif kind == 'Released' then
+        Presentation.SetConcealed(pawn, false)
         setFrozen(pawn, false)
         setInvincible(pawn, false)
         detach(pawn)

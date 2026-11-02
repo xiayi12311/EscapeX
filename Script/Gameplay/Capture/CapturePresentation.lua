@@ -12,6 +12,7 @@ local function valid(o) return o ~= nil and KismetSystemLibrary.IsValid(o) end
 local holding = nil          -- {actor = carrier, kind = 'carry'|'bind'}
 local applied = {}           -- actor -> highest revision consumed
 local appliedSession = {}    -- actor -> session that produced it
+local concealedByCarrier = {} -- carrier actor -> player pawn whose avatar is hidden
 
 -- Replication can hand us a payload that is older than what we already acted on. The
 -- revision counter is server-session scoped, however: a rebuilt service starts over at 1
@@ -47,6 +48,13 @@ local function localPawn()
     return pawn
 end
 
+local function pawnOf(key)
+    if type(key) ~= 'number' or key < 0 then return nil end
+    local ok, pawn = pcall(function() return UGCGameSystem.GetPlayerPawnByPlayerKey(key) end)
+    if not (ok and valid(pawn)) then return nil end
+    return pawn
+end
+
 -- Does this replicated state name the local player and ask them to be held here?
 -- No caching: OnRep already fires only when the synced table changed.
 local function wants(state, stages)
@@ -56,6 +64,29 @@ local function wants(state, stages)
     if type(stages) ~= 'table' then stages = {stages} end
     for _, want in ipairs(stages) do if name == want then return true end end
     return false
+end
+
+local function conceal(pawn)
+    if not valid(pawn) then return end
+    pcall(function() return pawn:SetActorHiddenInGame(true) end)
+end
+
+local function restoreConcealed(carrier)
+    local pawn = concealedByCarrier[carrier]
+    if pawn and valid(pawn) then
+        pcall(function() return pawn:SetActorHiddenInGame(false) end)
+    end
+    concealedByCarrier[carrier] = nil
+end
+
+local function forceStand(pawn)
+    -- SwitchPoseState is a client API. Only the owning client may switch the local
+    -- pawn; remote copies receive the resulting pose through normal replication.
+    if valid(pawn) and pawn == localPawn() then
+        pcall(function()
+            return UGCPlayerPawnSystem.SwitchPoseState(pawn, ESTEPoseState.Stand)
+        end)
+    end
 end
 
 local function release(keep)
@@ -122,6 +153,16 @@ function P.Carrier(actor, state)
     if not valid(actor) then return end
     if not accepts(actor, state) then return end
     if wants(state, {'Grabbing', 'Carrying', 'PuttingDown'}) then
+        local pawn = pawnOf(state.PlayerKey)
+        if pawn then
+            concealedByCarrier[actor] = pawn
+            forceStand(pawn)
+            conceal(pawn)
+        end
+    else
+        restoreConcealed(actor)
+    end
+    if wants(state, {'Grabbing', 'Carrying', 'PuttingDown'}) then
         Camera.Start(actor, 'carry')
     else
         Camera.Stop(actor)
@@ -150,8 +191,16 @@ end
 
 function P.End(actor)
     Camera.Stop(actor)
+    restoreConcealed(actor)
     if holding and holding.actor == actor then release(nil) end
     applied[actor] = nil
+end
+
+-- Server-side counterpart for listen-server visibility. Dedicated servers have no
+-- local view, while every remote client applies the same hide from OnRep.
+function P.SetConcealed(pawn, hidden)
+    if not valid(pawn) then return end
+    pcall(function() return pawn:SetActorHiddenInGame(hidden == true) end)
 end
 
 -- Used by presentation tests and by the debug log line only.
