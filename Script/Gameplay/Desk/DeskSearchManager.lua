@@ -111,7 +111,13 @@ function Manager:CompleteSearch(id,version,interaction)
     if now<d.endTime then return false,'TOO_EARLY' end
     local nextCount=self.TotalOpenedCount+1
     local fixed=self.config.FixedSearchOutcomes or {}
-    d.outcome=fixed[nextCount] or d.candidate
+    local fixedOutcome=fixed[nextCount]
+    local fixedConfig=fixedOutcome and (self.config.Outcomes or {})[fixedOutcome]
+    if fixedConfig and fixedConfig.ItemId and self.deps.itemExists
+        and self.deps.itemExists(fixedConfig.ItemId) then
+        fixedOutcome=nil
+    end
+    d.outcome=fixedOutcome or d.candidate
     d.event=tostring(d.id)..':'..d.version..':'..d.interaction
     d.searcher=d.player
     d.epoch=self.CounterEpoch; d.openTime=now

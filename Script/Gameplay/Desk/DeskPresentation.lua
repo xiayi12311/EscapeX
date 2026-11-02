@@ -45,8 +45,21 @@ local CONTENT_FLOOR_Z=57.6
 local function contentZ(a)
     return CONTENT_FLOOR_Z+(a.DeskContentHeight or 0.005)*50
 end
-local function contentAt(a,offset)
-    a.DeskContent:K2_SetRelativeLocation({X=0,Y=offset+CONTENT_Y,Z=contentZ(a)},false,{},true)
+local function ensureContentAttached(a)
+    if not valid(a.DeskContent) or not valid(a.Drawer) then return false end
+    -- DeskContent is presentation-only. Visibility changes do not disable physics,
+    -- and the placeholder Cube otherwise contributes a 100cm BlockAll collision.
+    a.DeskContent:SetCollisionEnabled(0)
+    if a.DeskContent.AttachParent==a.Drawer then return true end
+    local attached=a.DeskContent:K2_AttachToComponent(a.Drawer,'',2,2,2,false)
+    if not attached then
+        ugcprint('[DeskSearch] ERROR: DeskContent could not attach to Drawer')
+        return false
+    end
+    return true
+end
+local function contentAt(a)
+    a.DeskContent:K2_SetRelativeLocation({X=0,Y=CONTENT_Y,Z=contentZ(a)},false,{},true)
 end
 local function drawerAt(a,opened)
     local offset=opened and DRAWER_TRAVEL or 0
@@ -54,8 +67,10 @@ local function drawerAt(a,opened)
         a.Drawer:K2_SetRelativeLocation({X=0,Y=offset,Z=DRAWER_Z},false,{},true)
     end
     if valid(a.DeskContent) then
-        contentAt(a,offset)
-        a.DeskContent:SetVisibility(opened,false)
+        if ensureContentAttached(a) then
+            contentAt(a)
+            a.DeskContent:SetVisibility(opened and not a.DeskContentItemBacked,false)
+        end
     end
 end
 
@@ -73,9 +88,13 @@ function P.Apply(a,s)
     end
     a.DeskVisualSignature=signature; a.DeskVisualVersion=version; a.DeskVisualRevision=s.Revision or 0
     local outcome=Config.Outcomes[s.FinalOutcomeId]
-    if outcome and outcome.ContentScale and valid(a.DeskContent) then
+    a.DeskContentItemBacked=outcome and outcome.ItemId~=nil or false
+    if outcome and not a.DeskContentItemBacked and outcome.ContentScale and valid(a.DeskContent) then
         a.DeskContent:SetRelativeScale3D(outcome.ContentScale)
         a.DeskContentHeight=outcome.ContentScale.Z
+    end
+    if a.DeskContentItemBacked and valid(a.DeskContent) then
+        a.DeskContent:SetVisibility(false,false)
     end
     closeUI(a)
     if s.State=='Opening' then ensureTimer(a) else stopTimer(a) end
@@ -119,8 +138,8 @@ function P.Update(a)
             stopSequence(a)
             drawerAt(a,true)
         elseif elapsed>=(s.RevealOffset or 0.8) then
-            if valid(a.DeskContent) then
-                contentAt(a,DRAWER_TRAVEL)
+            if valid(a.DeskContent) and not a.DeskContentItemBacked then
+                contentAt(a)
                 a.DeskContent:SetVisibility(true,false)
             end
         end

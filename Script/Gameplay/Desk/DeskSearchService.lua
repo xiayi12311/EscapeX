@@ -11,21 +11,52 @@ end
 
 local function log(text) ugcprint('[DeskSearch] '..text) end
 
+local function clearReward(gm,actor)
+    local pickup=gm.DeskRewardActors and gm.DeskRewardActors[actor]
+    if valid(pickup) then pickup:K2_DestroyActor() end
+    if gm.DeskRewardActors then gm.DeskRewardActors[actor]=nil end
+end
+
 local function cancelEffect(gm,actor)
     local timer=gm.DeskEffectTimers and gm.DeskEffectTimers[actor]
     if timer then UGCTimerUtility.RemoveLuaTimer(timer); gm.DeskEffectTimers[actor]=nil end
+    clearReward(gm,actor)
+end
+
+local function spawnReward(gm,actor,outcome)
+    if outcome.ItemId==nil then return end
+    local drawer=actor.Drawer
+    if not valid(drawer) then
+        log('ERROR: cannot spawn fixed reward without drawer desk='..tostring(actor.DeskState and actor.DeskState.DeskId))
+        return
+    end
+    -- Spawn in the opened drawer. The pickup wrapper is a replicated world actor,
+    -- so late joiners see the same reward without replaying the desk animation.
+    local location=UGCMathUtility.TransformLocation(
+        drawer:K2_GetComponentToWorld(),Vector.New(0,-18.8,62))
+    local pickup=UGCItemSystemV2.SpawnPickupWrapper(
+        location,outcome.ItemId,outcome.PickupCount or 1)
+    if valid(pickup) then
+        gm.DeskRewardActors[actor]=pickup
+        log('Spawned fixed reward item='..tostring(outcome.ItemId)..' desk='..tostring(actor.DeskState and actor.DeskState.DeskId))
+    else
+        log('ERROR: SpawnPickupWrapper failed item='..tostring(outcome.ItemId))
+    end
 end
 
 local function scheduleEffects(gm,actor,data)
     local outcome=Config.Outcomes[data.FinalOutcomeId]
-    if not outcome or not outcome.Effects or #outcome.Effects==0 then return end
+    if not outcome then return end
+    local hasEffects=outcome.Effects and #outcome.Effects>0
+    if not hasEffects and outcome.ItemId==nil then return end
     cancelEffect(gm,actor)
     gm.DeskEffectTimers[actor]=UGCTimerUtility.CreateLuaTimer(data.RevealOffset or 0.8,function()
         if not valid(gm) or not gm.DeskSearchManager or not valid(actor) then return end
         gm.DeskEffectTimers[actor]=nil
         local current=gm.DeskSearchManager:GetSnapshot(data.DeskId)
         if not current or current.ResetVersion~=data.ResetVersion or current.OpenEventId~=data.OpenEventId then return end
-        for _,effect in ipairs(outcome.Effects) do
+        spawnReward(gm,actor,outcome)
+        for _,effect in ipairs(outcome.Effects or {}) do
             -- Text feedback is the initial UI/broadcast implementation; audio resources remain configurable work.
             local recipients={}
             if effect.Audience=='All' then recipients=UGCGameSystem.GetAllPlayerController(false)
@@ -62,6 +93,16 @@ local function validate(actor,key,radius)
     return true
 end
 
+local function itemExists(itemId)
+    local wrappers=UGCItemSystemV2.GetPickupWrapperListByItemID(itemId,true)
+    if wrappers and #wrappers>0 then return true end
+    for _,pawn in ipairs(UGCGameSystem.GetAllPlayerPawn() or {}) do
+        local count=UGCBackPackSystem.GetItemCount(pawn,itemId)
+        if type(count)=='number' and count>0 then return true end
+    end
+    return false
+end
+
 function Service.Get(gm)
     if not valid(gm) or not gm:HasAuthority() then return nil,'SERVER_ONLY' end
     return gm.DeskSearchManager
@@ -70,10 +111,12 @@ end
 function Service.Setup(gm)
     if not gm:HasAuthority() or gm.DeskSearchManager then return end
     gm.DeskEffectTimers={}
+    gm.DeskRewardActors={}
     gm.DeskSearchManager=Manager.new({
         now=function() return DeskClock.ServerNow(gm) end,
         roll=function(pool) return Config.Roll(pool) end,
         validate=validate,
+        itemExists=itemExists,
         log=log,
         emit=function(actor,data,kind,reason)
             if valid(actor) then
@@ -108,6 +151,8 @@ end
 function Service.Shutdown(gm)
     for _,timer in pairs(gm.DeskEffectTimers or {}) do UGCTimerUtility.RemoveLuaTimer(timer) end
     gm.DeskEffectTimers={}
+    for actor in pairs(gm.DeskRewardActors or {}) do clearReward(gm,actor) end
+    gm.DeskRewardActors={}
     if gm.DeskSearchTimer then
         UGCTimerUtility.RemoveLuaTimer(gm.DeskSearchTimer)
         gm.DeskSearchTimer=nil

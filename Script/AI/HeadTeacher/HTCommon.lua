@@ -6,7 +6,7 @@ M.Defaults = {
     HTDetectionInterval = 0.1, HTDetectionDelay = 1.0, HTMoveInterval = 0.5,
     HTWaypointRadius = 50, HTDiagnosticInterval = 5,
     HTAttachSocket = "headSocket", HTSourceSocket = "headSocket",
-    HTTargetBoundsHeightRatio = 0.75, HTRouteTag = "HT_Route",
+    HTTargetBoundsHeightRatio = 0.65, HTRouteTag = "HT_Route",
     HTWaypointClass = "Asset/Blueprint/Prefabs/AI/BP_HTWaypoint.BP_HTWaypoint_C",
     HTGroupClass = "Asset/Blueprint/Prefabs/AI/BP_HTRouteGroup.BP_HTRouteGroup_C",
     HTRouteRefreshInterval = 2,
@@ -138,7 +138,7 @@ function M.socket(p, mesh, name)
 end
 
 -- One explicit bounds sample, independent of the player's visual mesh/rig.
--- Extent is HALF size. 0.75 samples the upper region, below the box top.
+-- Extent is HALF size. 0.65 samples the upper torso, below the box top.
 function M.sightPoint(p, target)
     if not M.valid(target) then return nil end
     local center, extent = {}, {}
