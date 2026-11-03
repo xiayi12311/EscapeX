@@ -4,6 +4,7 @@
 local Manager = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureManager')
 local Config = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureConfig')
 local HT = UGCGameSystem.UGCRequire('Script.AI.HeadTeacher.HTCommon')
+local Presentation = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CapturePresentation')
 local Service = {}
 
 local LOG = '[HTCapture]'
@@ -121,6 +122,23 @@ end
 local function setInvincible(pawn, on)
     if not valid(pawn) then return end
     pcall(function() return UGCPlayerPawnSystem.SetIsInvincible(pawn, on) end)
+end
+
+-- The UGCPlayerPawnSystem wrapper leaves native optional arguments unset in this
+-- build, so a client-side call logs ShouldShowPrompt but never commits. The DS
+-- character implementation accepts the complete signature and replicates the pose.
+local function forceStanding(pawn)
+    if not valid(pawn) then return false end
+    if pawn.PoseState == ESTEPoseState.Stand then return true end
+    local ok, changed = pcall(function()
+        return pawn:SwitchPoseState(ESTEPoseState.Stand, true, true, false, false)
+    end)
+    if not ok or changed == false then
+        log('force standing failed: ' .. tostring(changed))
+        return false
+    end
+    log('forced captured player to stand before applying control locks')
+    return true
 end
 
 -- Server-side attach keeps the authoritative position glued to the carrier. The
@@ -296,6 +314,12 @@ end
 local function emit(data, kind, reason, post, monster)
     local pawn = pawnFor(data)
     if kind == 'SessionStarted' then
+        -- Capture starts from any locomotion pose. Leave crouch/prone before the
+        -- control locks are applied so the standing transition cannot be rejected.
+        if not forceStanding(pawn) then
+            failSession(data.SessionId, 'FORCE_STAND_FAILED')
+            return
+        end
         -- Freeze at the grab itself: waiting for Carrying leaves the pickup window open
         -- and the player can walk out of reach before being attached.
         if not setFrozen(pawn, true) then
@@ -303,6 +327,7 @@ local function emit(data, kind, reason, post, monster)
             return
         end
         setInvincible(pawn, true)
+        Presentation.SetConcealed(pawn, true)
     elseif kind == 'Carrying' then
         setSimulatedMovement(pawn, false)
         local ok, err = attach(pawn, monster, data.CarrySocket)
@@ -316,6 +341,7 @@ local function emit(data, kind, reason, post, monster)
         end
     elseif kind == 'Imprisoned' then
         detach(pawn)
+        Presentation.SetConcealed(pawn, false)
         local ok, err = attach(pawn, post and post.actor or nil, nil)
         if not ok then
             -- A post without a usable bind point cannot hold anyone: say so and let
@@ -330,6 +356,7 @@ local function emit(data, kind, reason, post, monster)
             return
         end
     elseif kind == 'Released' then
+        Presentation.SetConcealed(pawn, false)
         setFrozen(pawn, false)
         setInvincible(pawn, false)
         detach(pawn)

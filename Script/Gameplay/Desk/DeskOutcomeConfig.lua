@@ -3,7 +3,11 @@ local Config = {
     FixedSearchOutcomes = {[5]='NoteEvent_05', [10]='NoteEvent_10', [12]='LibraryKey'},
     -- Functional count triggers, dispatched by DeskSearchService when an opened
     -- search reaches the count. Outcome rendering stays in FixedSearchOutcomes.
-    CountTriggers = {[7]='EnableSecondRoute'},
+    CountTriggers = {[7]='EnableSecondRoute', [12]='RemoveClassAirWalls'},
+    -- Count-trigger removals are data driven so the map only owns actor tags.
+    TaggedActorRemovals = {
+        RemoveClassAirWalls = {Tag='ClassAirWall', ExpectedCount=2},
+    },
     Pools = {Default={{Id='Ordinary',Weight=80},{Id='Strange',Weight=20}}},
     Outcomes = {
         Ordinary={Label='普通物件',ContentScale={X=0.1,Y=0.1,Z=0.1},Effects={}},
