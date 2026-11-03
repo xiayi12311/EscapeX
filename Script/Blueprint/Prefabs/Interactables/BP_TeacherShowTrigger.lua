@@ -21,11 +21,12 @@ function TeacherShowTrigger:ConfigureCutsceneBindings(sequenceActor, player)
     if not valid(teacher) or not valid(camera) then
         ugcprint('[TeacherShowTrigger] possessable actors not found for tags: '
             ..tostring(self.TeacherActorTag)..', '..tostring(self.CameraActorTag))
-        return
+        return false
     end
 
     sequenceActor:UGCAddBinding(teacher, 'SK_NewWorld_TianTan_NPC_F')
     sequenceActor:UGCAddBinding(camera, 'TeacherCamera')
+    return true
 end
 
 return TeacherShowTrigger

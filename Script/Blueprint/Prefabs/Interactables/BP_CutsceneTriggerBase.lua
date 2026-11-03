@@ -17,17 +17,127 @@ local function NewCutsceneTriggerClass()
         return o ~= nil and KismetSystemLibrary.IsValid(o)
     end
 
-    local function stopCutscene(self)
-        if valid(self.CutscenePlayer) then self.CutscenePlayer:Stop() end
+    local function releaseCutscene(self)
+        self.CutscenePrepareGeneration = (self.CutscenePrepareGeneration or 0) + 1
+        self.CutscenePreloadPending = false
+        if valid(self.CutscenePlayer) then
+            pcall(function() self.CutscenePlayer:Stop() end)
+        end
+        if valid(self.CutsceneActor) then
+            pcall(function() self.CutsceneActor:K2_DestroyActor() end)
+        end
         self.CutscenePlayer = nil
-        if valid(self.CutsceneActor) then self.CutsceneActor:K2_DestroyActor() end
         self.CutsceneActor = nil
+        self.CutscenePrepared = false
+        self.CutscenePlaybackStarted = false
+        self.CutsceneBindingsReady = false
+    end
+
+    local function stopCutscene(self)
+        releaseCutscene(self)
+    end
+
+    local function prepareCutscenePlayer(self, sequence)
+        if self.CutscenePrepared and valid(self.CutscenePlayer) and valid(self.CutsceneActor) then
+            return true
+        end
+        if not valid(sequence) then return false end
+
+        local playRate = tonumber(self.CutscenePlayRate) or 1
+        if playRate <= 0 then
+            ugcprint('[CutsceneTrigger] CutscenePlayRate must be greater than zero')
+            return false
+        end
+        local startTime = tonumber(self.CutsceneStartTime) or 0
+        local playerClass = self.CutscenePlayerClass
+        if not valid(playerClass) then
+            playerClass = UE.LoadClass('/Script/LevelSequence.LevelSequencePlayer')
+            self.CutscenePlayerClass = playerClass
+        end
+        local factory = self.CutscenePlayerFactory
+        if not valid(factory) then
+            factory = valid(playerClass) and UGCObjectUtility.GetClassDefaultObject(playerClass)
+            self.CutscenePlayerFactory = factory
+        end
+        if not valid(factory) then
+            ugcprint('[CutsceneTrigger] failed to load LevelSequencePlayer factory')
+            return false
+        end
+
+        local player, sequenceActor = factory.CreateLevelSequencePlayer(
+            self,
+            sequence,
+            {
+                LoopCount=0,
+                PlayRate=playRate,
+                StartTime=startTime,
+                bRestoreState=self.CutsceneRestoreState == true,
+            },
+            nil
+        )
+        if not (valid(player) and valid(sequenceActor)) then
+            ugcprint('[CutsceneTrigger] failed to create LevelSequence player')
+            return false
+        end
+
+        self.CutscenePlayer = player
+        self.CutsceneActor = sequenceActor
+        self.CutscenePrepared = true
+        self.CutscenePlaybackStarted = false
+        self.CutsceneBindingsReady = self:ConfigureCutsceneBindings(sequenceActor, player) ~= false
+        return true
+    end
+
+    local function finishPreparingCutscene(self, sequence, generation)
+        if not valid(self)
+            or generation ~= self.CutscenePrepareGeneration
+            or self.CutscenePlaybackStarted then
+            return
+        end
+        self.CutscenePreloadPending = false
+        if not valid(sequence) then
+            ugcprint('[CutsceneTrigger] async sequence preload failed')
+            return
+        end
+        self.CutsceneSequence = sequence
+        if prepareCutscenePlayer(self, sequence) then
+            ugcprint('[CutsceneTrigger] preloaded and prepared sequence: '..tostring(self.CutsceneSequencePath))
+        end
+    end
+
+    function Trigger:PrepareCutsceneAssets()
+        if self:HasAuthority() or self.CutscenePlaybackStarted then return end
+        if valid(self.CutsceneSequence) then
+            prepareCutscenePlayer(self, self.CutsceneSequence)
+            return
+        end
+        if self.CutscenePreloadPending then return end
+        local sequencePath = self.CutsceneSequencePath
+        if type(sequencePath) ~= 'string' or sequencePath == '' then
+            ugcprint('[CutsceneTrigger] cutscene sequence path is not configured')
+            return
+        end
+
+        self.CutscenePrepareGeneration = (self.CutscenePrepareGeneration or 0) + 1
+        local generation = self.CutscenePrepareGeneration
+        self.CutscenePreloadPending = true
+        local trigger = self
+        local started = UGCObjectUtility.AsyncLoadObject(sequencePath, function(sequence)
+            finishPreparingCutscene(trigger, sequence, generation)
+        end, nil)
+        if not started then
+            self.CutscenePreloadPending = false
+            ugcprint('[CutsceneTrigger] failed to start sequence preload: '..tostring(sequencePath))
+        end
     end
 
     function Trigger:OnCutsceneFinished()
         self.CutscenePlayer = nil
         if valid(self.CutsceneActor) then self.CutsceneActor:K2_DestroyActor() end
         self.CutsceneActor = nil
+        self.CutscenePrepared = false
+        self.CutscenePlaybackStarted = false
+        self.CutsceneBindingsReady = false
     end
 
     function Trigger:ReceiveBeginPlay()
@@ -43,11 +153,14 @@ local function NewCutsceneTriggerClass()
             if not self.TriggerArea.bGenerateOverlapEvents then
                 ugcprint('[CutsceneTrigger] TriggerArea must enable Generate Overlap Events')
             end
+        else
+            self:PrepareCutsceneAssets()
         end
     end
 
     -- Subclasses bind possessable tracks here. Spawnable tracks need no binding.
     function Trigger:ConfigureCutsceneBindings(sequenceActor, player)
+        return true
     end
 
     -- Server-only public entry point for overlap or external gameplay triggers.
@@ -120,48 +233,39 @@ local function NewCutsceneTriggerClass()
             end
         end
 
-        stopCutscene(self)
+        if self.CutscenePlaybackStarted then releaseCutscene(self) end
 
         local sequencePath = self.CutsceneSequencePath
         if type(sequencePath) ~= 'string' or sequencePath == '' then
             ugcprint('[CutsceneTrigger] cutscene sequence path is not configured')
             return
         end
-        local sequence = UE.LoadObject(sequencePath)
+        local sequence = self.CutsceneSequence
+        if not valid(sequence) then
+            -- The trigger may be entered before its async preload completes.
+            self.CutscenePrepareGeneration = (self.CutscenePrepareGeneration or 0) + 1
+            self.CutscenePreloadPending = false
+            sequence = UE.LoadObject(sequencePath)
+            self.CutsceneSequence = sequence
+        end
         if not valid(sequence) then
             ugcprint('[CutsceneTrigger] sequence not found: '..tostring(sequencePath))
             return
         end
 
-        local playRate = tonumber(self.CutscenePlayRate) or 1
-        if playRate <= 0 then
-            ugcprint('[CutsceneTrigger] CutscenePlayRate must be greater than zero')
-            return
-        end
-        local startTime = tonumber(self.CutsceneStartTime) or 0
-        local playerClass = UE.LoadClass('/Script/LevelSequence.LevelSequencePlayer')
-        local factory = UGCObjectUtility.GetClassDefaultObject(playerClass)
-        local player, sequenceActor = factory.CreateLevelSequencePlayer(
-            self,
-            sequence,
-            {
-                LoopCount=0,
-                PlayRate=playRate,
-                StartTime=startTime,
-                bRestoreState=self.CutsceneRestoreState == true,
-            },
-            nil
-        )
-        if not (valid(player) and valid(sequenceActor)) then
-            ugcprint('[CutsceneTrigger] failed to create LevelSequence player')
-            return
+        if not (self.CutscenePrepared and valid(self.CutscenePlayer) and valid(self.CutsceneActor)) then
+            if not prepareCutscenePlayer(self, sequence) then return end
+        elseif not self.CutsceneBindingsReady then
+            self.CutsceneBindingsReady = self:ConfigureCutsceneBindings(self.CutsceneActor, self.CutscenePlayer) ~= false
+            if not self.CutsceneBindingsReady then
+                ugcprint('[CutsceneTrigger] failed to prepare possessable bindings')
+                return
+            end
         end
 
-        self.CutscenePlayer = player
-        self.CutsceneActor = sequenceActor
-        self:ConfigureCutsceneBindings(sequenceActor, player)
-        player.OnFinished:Add(self.OnCutsceneFinished, self)
-        player:Play()
+        self.CutscenePlayer.OnFinished:Add(self.OnCutsceneFinished, self)
+        self.CutscenePlayer:Play()
+        self.CutscenePlaybackStarted = true
 
         if type(self.EffectSoundPath) == 'string' and self.EffectSoundPath ~= '' then
             local sound = UE.LoadObject(self.EffectSoundPath)

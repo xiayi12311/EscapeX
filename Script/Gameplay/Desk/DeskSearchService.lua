@@ -103,6 +103,29 @@ local function itemExists(itemId)
     return false
 end
 
+local function removeTaggedActors(gm, config)
+    if not config or type(config.Tag)~='string' or config.Tag=='' then
+        log('ERROR: tagged actor removal is missing a tag')
+        return 0
+    end
+    local actors=UGCActorComponentUtility.GetAllActorsWithTag(gm,config.Tag) or {}
+    local matched,removed=0,0
+    for _,actor in pairs(actors) do
+        matched=matched+1
+        if valid(actor) then
+            actor:K2_DestroyActor()
+            removed=removed+1
+        end
+    end
+    if config.ExpectedCount and matched~=config.ExpectedCount then
+        log(string.format('WARNING: tagged actor removal tag=%s expected=%d matched=%d',
+            config.Tag,config.ExpectedCount,matched))
+    end
+    log(string.format('Removed tagged actors tag=%s matched=%d removed=%d',
+        config.Tag,matched,removed))
+    return removed
+end
+
 function Service.Get(gm)
     if not valid(gm) or not gm:HasAuthority() then return nil,'SERVER_ONLY' end
     return gm.DeskSearchManager
@@ -130,6 +153,9 @@ function Service.Setup(gm)
                 local action=Config.CountTriggers and Config.CountTriggers[data.CompletedSearchCount]
                 if action=='EnableSecondRoute' then
                     TeacherSpawner.OnRouteMilestone(gm)
+                elseif action and Config.TaggedActorRemovals
+                    and Config.TaggedActorRemovals[action] then
+                    removeTaggedActors(gm,Config.TaggedActorRemovals[action])
                 elseif action then
                     log('Unknown count trigger '..tostring(action))
                 end

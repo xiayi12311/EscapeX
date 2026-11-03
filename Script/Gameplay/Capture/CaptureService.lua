@@ -124,6 +124,23 @@ local function setInvincible(pawn, on)
     pcall(function() return UGCPlayerPawnSystem.SetIsInvincible(pawn, on) end)
 end
 
+-- The UGCPlayerPawnSystem wrapper leaves native optional arguments unset in this
+-- build, so a client-side call logs ShouldShowPrompt but never commits. The DS
+-- character implementation accepts the complete signature and replicates the pose.
+local function forceStanding(pawn)
+    if not valid(pawn) then return false end
+    if pawn.PoseState == ESTEPoseState.Stand then return true end
+    local ok, changed = pcall(function()
+        return pawn:SwitchPoseState(ESTEPoseState.Stand, true, true, false, false)
+    end)
+    if not ok or changed == false then
+        log('force standing failed: ' .. tostring(changed))
+        return false
+    end
+    log('forced captured player to stand before applying control locks')
+    return true
+end
+
 -- Server-side attach keeps the authoritative position glued to the carrier. The
 -- owning client attaches its own pawn locally for the visual (CapturePresentation):
 -- measured 2026-10-26 that a server-only attach tracks on the server but does not
@@ -297,6 +314,12 @@ end
 local function emit(data, kind, reason, post, monster)
     local pawn = pawnFor(data)
     if kind == 'SessionStarted' then
+        -- Capture starts from any locomotion pose. Leave crouch/prone before the
+        -- control locks are applied so the standing transition cannot be rejected.
+        if not forceStanding(pawn) then
+            failSession(data.SessionId, 'FORCE_STAND_FAILED')
+            return
+        end
         -- Freeze at the grab itself: waiting for Carrying leaves the pickup window open
         -- and the player can walk out of reach before being attached.
         if not setFrozen(pawn, true) then

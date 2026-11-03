@@ -79,16 +79,6 @@ local function restoreConcealed(carrier)
     concealedByCarrier[carrier] = nil
 end
 
-local function forceStand(pawn)
-    -- SwitchPoseState is a client API. Only the owning client may switch the local
-    -- pawn; remote copies receive the resulting pose through normal replication.
-    if valid(pawn) and pawn == localPawn() then
-        pcall(function()
-            return UGCPlayerPawnSystem.SwitchPoseState(pawn, ESTEPoseState.Stand)
-        end)
-    end
-end
-
 local function release(keep)
     if not holding or (keep and holding.actor == keep) then return end
     -- Release the pawn we acquired; a respawn may already have replaced localPawn().
@@ -156,7 +146,6 @@ function P.Carrier(actor, state)
         local pawn = pawnOf(state.PlayerKey)
         if pawn then
             concealedByCarrier[actor] = pawn
-            forceStand(pawn)
             conceal(pawn)
         end
     else
