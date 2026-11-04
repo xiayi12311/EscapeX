@@ -12,6 +12,7 @@ local Config = {
     FadeInterpSpeed = 4,
     MaximumOpacity = 0.85,
     MaterialSlot = 0,
+    OpacityParameter = 'alpha',
 }
 
 local function valid(o)
@@ -21,7 +22,7 @@ end
 local function setOpacity(wall, opacity)
     wall.CurrentOpacity = opacity
     if valid(wall.AirWallMaterial) then
-        wall.AirWallMaterial:SetScalarParameterValue('Opacity', opacity)
+        wall.AirWallMaterial:SetScalarParameterValue(Config.OpacityParameter, opacity)
     end
 end
 
