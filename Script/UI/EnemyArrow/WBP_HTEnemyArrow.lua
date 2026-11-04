@@ -1,3 +1,11 @@
+---@class WBP_HTEnemyArrow_C:UUserWidget
+---@field CanvasPanel_Arrow UCanvasPanel
+---@field Image_Arrow UImage
+---@field Image_InScreenArrow UImage
+---@field InScreenPnl UCanvasPanel
+---@field OutScreenPnl UCanvasPanel
+---@field ProgressBar_0 UProgressBar
+--Edit Below--
 local WBP_HTEnemyArrow = {}
 
 local State = UGCGameSystem.UGCRequire("Script.UI.EnemyArrow.HTArrowState")
