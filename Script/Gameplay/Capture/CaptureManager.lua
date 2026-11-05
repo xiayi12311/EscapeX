@@ -47,6 +47,7 @@ local function snapshot(s)
         StruggleReady = s.ready == true, StruggleExpiresAt = s.unlockAt,
         Struggle = s.struggle, StruggleNeed = s.strugglePresses,
         StruggleInterval = s.struggleInterval,
+        StruggleDecayPerSecond = s.struggleDecayPerSecond,
         RescuerKey = s.rescuer, RescueEndsAt = s.rescueEndsAt,
         RescueDuration = s.rescueDuration, RescueRadius = s.rescueRadius,
         ArrivedAt = s.arrivedAt, PutDownUntil = s.putUntil,
@@ -195,6 +196,7 @@ function Manager:StartSession(playerKey, monster, options, postOptions)
         rescueDuration = option(self, postOptions, 'RescueDuration'),
         strugglePresses = option(self, postOptions, 'StrugglePresses'),
         struggleInterval = option(self, options, 'StruggleInterval'),
+        struggleDecayPerSecond = option(self, options, 'StruggleDecayPerSecond'),
         carrySocket = option(self, options, 'CarrySocket'),
     }
     self.sessions[self.serial] = s
@@ -314,6 +316,13 @@ end
 
 -- ---------------------------------------------------------------- struggle / rescue
 
+local function decayStruggle(s, now)
+    local previous = s.struggleUpdatedAt or now
+    local elapsed = math.max(0, now - previous)
+    s.struggle = math.max(0, s.struggle - elapsed * s.struggleDecayPerSecond * s.strugglePresses)
+    s.struggleUpdatedAt = now
+end
+
 function Manager:RegisterStruggle(playerKey)
     local s = self:SessionOfPlayer(playerKey)
     if not s then return false, 'NO_SESSION' end
@@ -323,6 +332,7 @@ function Manager:RegisterStruggle(playerKey)
     if s.lastPressAt and (now - s.lastPressAt) < s.struggleInterval then
         return false, 'TOO_FAST'
     end
+    decayStruggle(s, now)
     s.lastPressAt = now
     s.struggle = s.struggle + 1
     self:publish(s, 'Struggle')
@@ -379,6 +389,7 @@ function Manager:_enter(s, state, now)
     elseif state == 'Imprisoned' then
         s.unlockAt = now + option(self, s.options, 'ImprisonDuration')
         s.struggle, s.ready, s.lastPressAt = 0, false, nil
+        s.struggleUpdatedAt = now
         s.bound = true
         -- The carrier is finished with this session and goes back to patrolling, so it
         -- must be able to catch somebody else while this player is still held at the
@@ -417,6 +428,10 @@ function Manager:Update()
                 if not s.ready and now >= s.unlockAt then
                     s.ready = true
                     self:publish(s, 'StruggleReady')
+                end
+                if s.ready and s.struggle > 0 then
+                    decayStruggle(s, now)
+                    if s.struggle == 0 then self:publish(s, 'StruggleDecay') end
                 end
                 if s.rescuer and s.post then
                     local ok, why = self.deps.validateRescuer(s.post, s.rescuer, s.rescueRadius)

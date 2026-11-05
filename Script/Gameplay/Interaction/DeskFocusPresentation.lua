@@ -91,7 +91,7 @@ local function prepareWidget(c)
                 local actor=c.state.focus
                 if not c.hold and c.state:CanRequest() and valid(actor) then
                     holdSequence=holdSequence+1
-                    c.hold={actor=actor,sequence=holdSequence,revision=actor.DeskState.Revision or 0}
+                    c.hold={actor=actor,sequence=holdSequence,revision=actor.DeskState.Revision or 0, started=DeskClock.ApproxServerNow(c.pawn), duration=actor.DeskSearchDuration}
                     log('requesting search through controller RPC')
                     UnrealNetwork.CallUnrealRPC(c.controller,c.controller,'ServerRequestDeskSearch',actor,holdSequence)
                 end
@@ -176,6 +176,9 @@ function M.Update()
         else
             widget:SetProgress(nil)
         end
+    elseif c.hold and c.hold.actor==display and c.hold.started and c.hold.duration and c.hold.duration>0 then
+        local now=DeskClock.ApproxServerNow(c.pawn)
+        widget:SetProgress(now and math.max(0,math.min(1,(now-c.hold.started)/c.hold.duration)) or nil)
     else widget:SetProgress(nil) end
     M.UpdateAnchor()
 end
@@ -218,6 +221,15 @@ function M.DeskChanged(actor,state)
     -- log here is a failure path
     log('desk state reached focus layer: '..tostring(KismetSystemLibrary.GetObjectName(actor))
         ..' state='..tostring(state and state.State)..' rev='..tostring(state and state.Revision))
+end
+
+function M.RequestRejected(sequence,reason)
+    local c=current
+    if c and c.hold and c.hold.sequence==sequence then
+        c.hold=nil
+        if valid(c.widget) then c.widget:SetProgress(nil) end
+        log('search rejected: '..tostring(reason))
+    end
 end
 
 function M.DeskRemoved(actor)

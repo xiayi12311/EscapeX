@@ -2,6 +2,8 @@ local H = UGCGameSystem.UGCRequire("Script.AI.HeadTeacher.HTCommon")
 local T = {}
 function T:ReceiveExecuteAI(_,p)
     if not H.begin(self,p,"ReturnToRoute") then return end
+    H.setBattle(p,false)
+    H.publishVision(p,{})
     p.HTDetectionEnabled=false
     local bb=H.bb(p)
     H.traceEvent(string.format("return_enter seq=%s processed=%s lockBeforeClear=%s",

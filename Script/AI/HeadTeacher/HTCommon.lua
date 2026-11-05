@@ -9,6 +9,7 @@ M.Defaults = {
     HTTargetBoundsHeightRatio = 0.65, HTRouteTag = "HT_Route",
     HTWaypointClass = "Asset/Blueprint/Prefabs/AI/BP_HTWaypoint.BP_HTWaypoint_C",
     HTGroupClass = "Asset/Blueprint/Prefabs/AI/BP_HTRouteGroup.BP_HTRouteGroup_C",
+    HTDetectSkillClass = "Asset/Blueprint/Prefabs/Skills/Blueprint/Prefabs/Skills/HTDetectSkill.HTDetectSkill_C",
     HTRouteRefreshInterval = 2,
     HTSightChannel = 3, HTDebug = false,
     HTConePitch = 0, HTConeYaw = -171.49657, HTConeRoll = -90,
@@ -46,6 +47,22 @@ function M.log(p, key, message)
     if not d.logs[key] or d.clock >= d.logs[key] then
         ugcprint("[HeadTeacher] " .. message)
         d.logs[key] = d.clock + M.config(p, "HTDiagnosticInterval")
+    end
+end
+
+-- Own exactly one battle-state count across chase and capture.
+function M.setBattle(p, enabled)
+    local d = M.data(p)
+    local tag = 'PawnState.Action.Battle'
+    if enabled and not d.battleOwned then
+        if UGCPersistEffectSystem.EnterDynamicState(p, tag) then
+            d.battleOwned = true
+        else
+            M.log(p, 'battle-state', 'Failed to enter battle state')
+        end
+    elseif not enabled and d.battleOwned then
+        UGCPersistEffectSystem.LeaveDynamicState(p, tag)
+        d.battleOwned = false
     end
 end
 
@@ -255,24 +272,33 @@ function M.canSee(p, target, candidates, nearby)
     return M.alive(target) and not M.busyPlayer(key) and M.visible(p,target)
 end
 
-function M.publishVision(p, visible)
+function M.publishVision(p, visible, lockedKey)
     if not p:HasAuthority() then return end
-    local keys = {}
+    local keys, progress = {}, {}
     for _,entry in ipairs(visible or {}) do
         local key = entry.key
         if key == nil then
             key = UGCGameSystem.GetPlayerKeyByPlayerPawn(entry.actor or entry)
         end
-        if key ~= nil and key ~= -1 then keys[#keys+1] = key end
+        if key ~= nil and key ~= -1 then
+            keys[#keys+1] = key
+            progress[#progress+1] = string.format('%s:%.3f', tostring(key), entry.progress or 0)
+        end
     end
     table.sort(keys)
+    table.sort(progress)
     local signature = table.concat(keys, ",")
+    local progressSignature = table.concat(progress, ',')
+    lockedKey = lockedKey or -1
     local current = p.HTCaptureState or {}
-    if current.VisionPlayerKeys == signature then return end
+    if current.VisionPlayerKeys == signature and current.VisionProgress == progressSignature
+        and current.VisionLockedKey == lockedKey then return end
     local nextState = {}
     for key,value in pairs(current) do nextState[key] = value end
     nextState.VisionSignature = tostring((tonumber(current.VisionSignature) or 0) + 1)
     nextState.VisionPlayerKeys = signature
+    nextState.VisionProgress = progressSignature
+    nextState.VisionLockedKey = lockedKey
     p.HTCaptureState = nextState
 end
 
@@ -300,7 +326,6 @@ function M.scan(p)
         if a.distance == b.distance then return a.key < b.key end
         return a.distance < b.distance
     end)
-    M.publishVision(p,visible)
     local selected=visible[1] and visible[1].actor or nil
     return selected,visible
 end

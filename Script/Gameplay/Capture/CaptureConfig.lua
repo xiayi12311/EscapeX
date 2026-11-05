@@ -12,6 +12,9 @@ C.Defaults = {
     ImprisonDuration = 15,
     StrugglePresses = 8,
     StruggleInterval = 0.15,
+    StruggleDecayPerSecond = 0.05, -- fraction of the full progress bar per second
+    StruggleUISetupDelay = 0.05, -- create the Slate tree after the async-load callback
+    StruggleUIRefreshInterval = 0.05,
     RescueDuration = 3,
     RescueRadius = 220,
     -- Height compensation for the bind point, whose own RelativeLocation cannot be
@@ -60,6 +63,8 @@ function C.Check(options)
     ok, value = num('EscortSpeed', 1)
     if not ok then return false, value end
     ok, value = num('StruggleInterval', 0.01, 2)
+    if not ok then return false, value end
+    ok, value = num('StruggleDecayPerSecond', 0, 1)
     if not ok then return false, value end
     ok, value = num('RescueDuration', 0.1, 60)
     if not ok then return false, value end

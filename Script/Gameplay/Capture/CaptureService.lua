@@ -248,7 +248,9 @@ local function publishMonster(monster, data)
         monster.HTCaptureState = {PlayerKey = -1, Stage = 'None', SessionId = -1,
             Revision = data.Revision,
             VisionSignature = current and current.VisionSignature,
-            VisionPlayerKeys = current and current.VisionPlayerKeys}
+            VisionPlayerKeys = current and current.VisionPlayerKeys,
+            VisionProgress = current and current.VisionProgress,
+            VisionLockedKey = current and current.VisionLockedKey}
         return
     end
     monster.HTCaptureState = {
@@ -256,6 +258,8 @@ local function publishMonster(monster, data)
         Stage = data.State, Revision = data.Revision, CarrySocket = data.CarrySocket,
         VisionSignature = current and current.VisionSignature,
         VisionPlayerKeys = current and current.VisionPlayerKeys,
+        VisionProgress = current and current.VisionProgress,
+        VisionLockedKey = current and current.VisionLockedKey,
     }
 end
 
@@ -284,6 +288,7 @@ local function publishPost(post, data)
         PlayerKey = data.PlayerKey, State = data.State, PostId = post.id,
         SessionId = data.SessionId,
         Revision = data.Revision, Struggle = data.Struggle, StruggleNeed = data.StruggleNeed,
+        StruggleDecayPerSecond = data.StruggleDecayPerSecond,
         StruggleReady = data.StruggleReady, StruggleWaitSeconds = wait,
         RescuerKey = data.RescuerKey, RescueSeconds = rescueLeft,
         RescueDuration = data.RescueDuration,

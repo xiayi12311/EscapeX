@@ -3,6 +3,7 @@ local C = UGCGameSystem.UGCRequire("Script.AI.HeadTeacher.HTCapture")
 local T = {}
 function T:ReceiveExecuteAI(controller,p)
     if not H.begin(self,p,"Catch") then return end
+    H.setBattle(p,true)
     -- A reused task node must not inherit a finished capture's flag.
     self.Capturing=false
     p.HTDetectionEnabled=false
@@ -61,6 +62,7 @@ function T:ReceiveExecuteAI(controller,p)
     -- A handler that created a session and then failed would otherwise leave the pawn
     -- owning a session nothing drives: the monster would refuse every later catch.
     if C.active(p) then C.cancel(p,'BEGIN_INCOMPLETE') end
+    H.setBattle(p,false)
     bb:ClearValue("LockedTarget")
     bb:SetValueAsBool("CatchReady",false)
     self:FinishExecute(true)
@@ -70,6 +72,7 @@ function T:ReceiveTickAI(_,p,dt)
     H.progress(p,dt)
     local finished,reason=C.update(self,p,dt)
     if not finished then return end
+    H.setBattle(p,false)
     self.Capturing=false
     local bb=H.bb(p)
     bb:ClearValue("LockedTarget")
@@ -85,6 +88,7 @@ function T:ReceiveAbortAI(_,p)
         self.Capturing=false
         C.cancel(p,'BT_ABORTED')
     end
+    if H.valid(p) and p:HasAuthority() then H.setBattle(p,false) end
     H.traceEvent(string.format("catch_abort %s", H.snapshot(p,H.target(p))))
     H.abort(self,p)
 end

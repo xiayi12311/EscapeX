@@ -22,7 +22,15 @@ end
 -- accepted from the client. The existing service validates desk registration,
 -- character state, range and exclusivity on the server.
 function PlayerController:GetAvailableServerRPCs()
-    return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch'
+    return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle'
+end
+
+function PlayerController:ServerRequestStruggle(post, sessionId)
+    if not self:HasAuthority() or not post or not KismetSystemLibrary.IsValid(post) then return end
+    local state = post.PrisonState
+    if not state or state.SessionId ~= sessionId or state.State ~= 'Imprisoned' then return end
+    local ok, reason = Capture.Struggle(UGCGameSystem.GetGameMode(), post, self)
+    if not ok and reason ~= 'TOO_FAST' then ugcprint('[HTCapture] struggle refused '..tostring(reason)) end
 end
 
 function PlayerController:ServerRequestDeskSearch(desk, sequence)
@@ -33,7 +41,14 @@ function PlayerController:ServerRequestDeskSearch(desk, sequence)
     self.DeskHoldActor=nil
     local ok,reason=DeskSearch.StartSearch(UGCGameSystem.GetGameMode(),desk,self)
     if ok then self.DeskHoldActor=desk end
-    if not ok then ugcprint('[DeskSearch] request rejected '..tostring(reason)) end
+    if not ok then
+        ugcprint('[DeskSearch] request rejected '..tostring(reason))
+        UnrealNetwork.CallUnrealRPC(self,self,'ClientDeskSearchRejected',sequence,tostring(reason))
+    end
+end
+
+function PlayerController:ClientDeskSearchRejected(sequence,reason)
+    Focus.RequestRejected(sequence,reason)
 end
 
 function PlayerController:ServerCancelDeskSearch(desk, sequence)

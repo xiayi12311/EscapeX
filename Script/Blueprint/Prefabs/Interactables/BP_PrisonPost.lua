@@ -100,17 +100,8 @@ end
 -- Prisoner action: available only once the imprisonment grace has passed (the manager
 -- reports that as StruggleReady), then one call per press.
 function Post:CheckBreakFree(Click_Param)
-    local prisoner
-    if self:HasAuthority() then
-        prisoner = Service.PrisonerOf(UGCGameSystem.GetGameMode(), self)
-    else
-        prisoner = self.PrisonState
-    end
-    if not prisoner then return false end
-    if prisoner.State ~= 'Imprisoned' then return false end
-    local key = Service.KeyOf(controllerOf(Click_Param))
-    if key < 0 or key ~= prisoner.PlayerKey then return false end
-    return prisoner.StruggleReady == true
+    -- The prisoner uses the shared progress widget; keep the native rescue button.
+    return false
 end
 
 function Post:OnClickBreakFree(Click_Param)

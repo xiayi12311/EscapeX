@@ -201,7 +201,7 @@ end
 -- server-only attach does not move them on their screen (measured 2026-10-26).
 TheHeadTeacher.HTCaptureState = {
     PlayerKey = -1, Stage = "None", Revision = 0,
-    VisionSignature = "0", VisionPlayerKeys = "",
+    VisionSignature = "0", VisionPlayerKeys = "", VisionProgress = "", VisionLockedKey = -1,
 }
 
 function TheHeadTeacher:ReceiveBeginPlay()

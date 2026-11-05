@@ -4,15 +4,15 @@
 ---@field DefaultSceneRoot USceneComponent
 ---@field FadeStartDistance float
 ---@field FullVisibleDistance float
+---@field MaxAlphaIntensity float
 --Edit Below--
 local AirWall = {}
 
 local Config = {
     UpdateInterval = 0.05,
     FadeInterpSpeed = 4,
-    MaximumOpacity = 0.85,
     MaterialSlot = 0,
-    OpacityParameter = 'alpha',
+    OpacityParameter = 'Alpha_Intensity',
 }
 
 local function valid(o)
@@ -48,14 +48,24 @@ function AirWall:UpdateFade()
         return
     end
 
+    local maximumOpacity = self.MaxAlphaIntensity
+    if type(maximumOpacity) ~= 'number' or maximumOpacity ~= maximumOpacity
+        or maximumOpacity < 0 or maximumOpacity == math.huge then
+        if not self.MaxAlphaIntensityError then
+            self.MaxAlphaIntensityError = true
+            ugcprint('[AirWall] ERROR: MaxAlphaIntensity must be a finite non-negative number')
+        end
+        return
+    end
+
     local distance = self:GetDistanceTo(pawn)
     local target = 0
     if distance <= fullVisibleDistance then
-        target = Config.MaximumOpacity
+        target = maximumOpacity
     elseif distance < fadeStartDistance then
         local ratio = (fadeStartDistance - distance)
             / (fadeStartDistance - fullVisibleDistance)
-        target = Config.MaximumOpacity * ratio
+        target = maximumOpacity * ratio
     end
 
     local blend = math.min(1, Config.UpdateInterval * Config.FadeInterpSpeed)

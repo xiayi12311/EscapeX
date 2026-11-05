@@ -3,6 +3,7 @@
 -- copy in place while the player's own screen stays where they were standing.
 -- No gameplay decision happens here; the server state is the only input.
 local Camera = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureCamera')
+local StruggleUI = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.StrugglePresentation')
 local P = {}
 
 local LOG = '[HTCapture]'
@@ -167,6 +168,7 @@ end
 function P.Bind(actor, state)
     if not valid(actor) then return end
     if not accepts(actor, state) then return end
+    StruggleUI.Update(actor, state)
     if wants(state, {'Imprisoned'}) then
         Camera.Start(actor, 'bind')
         grab(actor, 'bind', nil)
@@ -179,6 +181,7 @@ function P.Bind(actor, state)
 end
 
 function P.End(actor)
+    StruggleUI.End(actor)
     Camera.Stop(actor)
     restoreConcealed(actor)
     if holding and holding.actor == actor then release(nil) end

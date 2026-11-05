@@ -2,6 +2,7 @@ local H = UGCGameSystem.UGCRequire("Script.AI.HeadTeacher.HTCommon")
 local T = {}
 function T:ReceiveExecuteAI(_,p)
     if not H.begin(self,p,"Chase") then return end
+    H.setBattle(p,true)
     p.HTDetectionEnabled=false
     self.Sequence=H.bb(p):GetValueAsInt("ChaseSequenceId")
     H.traceEvent(string.format("chase_enter taskSeq=%d %s", self.Sequence, H.snapshot(p,H.target(p))))
@@ -34,6 +35,7 @@ function T:ReceiveTickAI(_,p,dt)
     H.moveTick(self,p,target:K2_GetActorLocation(),H.config(p,"HTChaseSpeed"),dt)
 end
 function T:ReceiveAbortAI(_,p)
+    if H.valid(p) and p:HasAuthority() then H.setBattle(p,false) end
     H.traceEvent(string.format("chase_abort taskSeq=%s %s", tostring(self.Sequence), H.snapshot(p,H.target(p))))
     H.abort(self,p)
 end

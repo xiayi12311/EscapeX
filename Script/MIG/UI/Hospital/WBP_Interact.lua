@@ -22,10 +22,12 @@ function Button:SetProgress(value)
 end
 
 function Button:OnPressed()
+    if self.PressedFeedback then self:SetRenderScale({X=0.9,Y=0.9}) end
     if self.InteractionOwner then self.InteractionOwner:OnSearchPressed() end
 end
 
 function Button:OnReleased()
+    if self.PressedFeedback then self:SetRenderScale({X=1,Y=1}) end
     if self.InteractionOwner then self.InteractionOwner:OnSearchReleased() end
 end
 
