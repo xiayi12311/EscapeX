@@ -53,6 +53,10 @@ local function snapshot(s)
         ArrivedAt = s.arrivedAt, PutDownUntil = s.putUntil,
         -- The engine adapter needs the socket on every transition, not only at start.
         CarrySocket = s.carrySocket,
+        CarryOffset = s.carryOffset,
+        CarryOffsetX = s.carryOffsetX, CarryOffsetY = s.carryOffsetY,
+        CarryOffsetZ = s.carryOffsetZ, CarryOffsetPitch = s.carryOffsetPitch,
+        CarryOffsetYaw = s.carryOffsetYaw, CarryOffsetRoll = s.carryOffsetRoll,
         -- Released must know whether the player was ever actually bound: an escort that
         -- failed halfway releases the player where they stand, not at the post.
         WasBound = s.bound == true,
@@ -198,6 +202,13 @@ function Manager:StartSession(playerKey, monster, options, postOptions)
         struggleInterval = option(self, options, 'StruggleInterval'),
         struggleDecayPerSecond = option(self, options, 'StruggleDecayPerSecond'),
         carrySocket = option(self, options, 'CarrySocket'),
+        carryOffset = value(options or {}, 'CarryOffset'),
+        carryOffsetX = value(options or {}, 'CarryOffsetX'),
+        carryOffsetY = value(options or {}, 'CarryOffsetY'),
+        carryOffsetZ = value(options or {}, 'CarryOffsetZ'),
+        carryOffsetPitch = value(options or {}, 'CarryOffsetPitch'),
+        carryOffsetYaw = value(options or {}, 'CarryOffsetYaw'),
+        carryOffsetRoll = value(options or {}, 'CarryOffsetRoll'),
     }
     self.sessions[self.serial] = s
     self.byPlayer[playerKey] = self.serial

@@ -4,6 +4,7 @@
 -- No gameplay decision happens here; the server state is the only input.
 local Camera = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureCamera')
 local StruggleUI = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.StrugglePresentation')
+local Config = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureConfig')
 local P = {}
 
 local LOG = '[HTCapture]'
@@ -13,7 +14,57 @@ local function valid(o) return o ~= nil and KismetSystemLibrary.IsValid(o) end
 local holding = nil          -- {actor = carrier, kind = 'carry'|'bind'}
 local applied = {}           -- actor -> highest revision consumed
 local appliedSession = {}    -- actor -> session that produced it
-local concealedByCarrier = {} -- carrier actor -> player pawn whose avatar is hidden
+local carryAnimations = {} -- carrier -> {pawn, mesh, previous animation mode}
+-- Visibility: do NOT hide the captured player during grab/carry (user request 2026-11-06).
+-- Collision: carried pawn capsule overlaps the carrier body once offsets hang them on-side;
+-- mutual IgnoreActorWhenMoving + NoCollision on the pawn capsule stops the carrier from jittering.
+
+local function setMoveIgnore(comp, actor, ignore)
+    if not (valid(comp) and valid(actor)) then return end
+    pcall(function() return comp:IgnoreActorWhenMoving(actor, ignore == true) end)
+end
+
+local function applyCarryCollision(pawn, carrier, enable)
+    if not valid(pawn) then return end
+    if enable then
+        if not valid(carrier) then return end
+        local saved = holding and holding.collision
+        if not saved then
+            local enabled = 3
+            pcall(function()
+                if valid(pawn.CapsuleComponent) then
+                    enabled = pawn.CapsuleComponent:GetCollisionEnabled()
+                end
+            end)
+            if holding then holding.collision = {carrier = carrier, capsuleEnabled = enabled} end
+        elseif holding then
+            holding.collision.carrier = carrier
+        end
+        setMoveIgnore(pawn.CapsuleComponent, carrier, true)
+        setMoveIgnore(carrier.CapsuleComponent, pawn, true)
+        if valid(carrier.HitBox) then setMoveIgnore(carrier.HitBox, pawn, true) end
+        pcall(function()
+            if valid(pawn.CapsuleComponent) then
+                pawn.CapsuleComponent:SetCollisionEnabled(0) -- NoCollision
+            end
+        end)
+    else
+        local saved = holding and holding.collision
+        local c = carrier or (saved and saved.carrier)
+        if valid(c) and valid(pawn) then
+            setMoveIgnore(pawn.CapsuleComponent, c, false)
+            setMoveIgnore(c.CapsuleComponent, pawn, false)
+            if valid(c.HitBox) then setMoveIgnore(c.HitBox, pawn, false) end
+        end
+        local restore = (saved and saved.capsuleEnabled) or 3
+        pcall(function()
+            if valid(pawn.CapsuleComponent) then
+                pawn.CapsuleComponent:SetCollisionEnabled(restore)
+            end
+        end)
+        if holding then holding.collision = nil end
+    end
+end
 
 -- Replication can hand us a payload that is older than what we already acted on. The
 -- revision counter is server-session scoped, however: a rebuilt service starts over at 1
@@ -67,17 +118,38 @@ local function wants(state, stages)
     return false
 end
 
-local function conceal(pawn)
-    if not valid(pawn) then return end
-    pcall(function() return pawn:SetActorHiddenInGame(true) end)
+
+local function stopCarryAnimation(carrier)
+    local saved = carryAnimations[carrier]
+    if not saved then return end
+    carryAnimations[carrier] = nil
+    if valid(saved.mesh) then
+        local ok, err = pcall(function()
+            saved.mesh:Stop()
+            saved.mesh:SetAnimationMode(saved.mode)
+        end)
+        if not ok then log('restore carry animation failed: ' .. tostring(err)) end
+    end
 end
 
-local function restoreConcealed(carrier)
-    local pawn = concealedByCarrier[carrier]
-    if pawn and valid(pawn) then
-        pcall(function() return pawn:SetActorHiddenInGame(false) end)
+local function startCarryAnimation(carrier, pawn)
+    local current = carryAnimations[carrier]
+    if current and current.pawn == pawn then return end
+    stopCarryAnimation(carrier)
+    if not (valid(pawn) and valid(pawn.Mesh)) then
+        log('cannot play carry animation: player mesh unavailable')
+        return
     end
-    concealedByCarrier[carrier] = nil
+    local mesh = pawn.Mesh
+    local ok, err = pcall(function()
+        local path = UGCGameSystem.GetUGCResourcesFullPath(Config.CarryPresentation.AnimationPath)
+        local anim = UGCObjectUtility.LoadObject(path)
+        if not valid(anim) then error('animation unavailable: ' .. tostring(path)) end
+        local mode = mesh:GetAnimationMode()
+        mesh:PlayAnimation(anim, Config.CarryPresentation.Loop)
+        carryAnimations[carrier] = {pawn = pawn, mesh = mesh, mode = mode}
+    end)
+    if not ok then log('carry animation failed: ' .. tostring(err)) end
 end
 
 local function release(keep)
@@ -85,6 +157,7 @@ local function release(keep)
     -- Release the pawn we acquired; a respawn may already have replaced localPawn().
     local pawn = holding.pawn
     if valid(pawn) then
+        applyCarryCollision(pawn, holding.actor, false)
         pcall(function() return pawn:K2_DetachFromActor(2, 2, 2) end)
         -- restore local prediction only once the attach is gone
         pcall(function()
@@ -96,7 +169,7 @@ local function release(keep)
     holding = nil
 end
 
-local function grab(actor, kind, socketName)
+local function grab(actor, kind, socketName, state)
     if holding and holding.actor == actor and holding.kind == kind then return end
     release(nil)
     local pawn = localPawn()
@@ -108,6 +181,31 @@ local function grab(actor, kind, socketName)
             return pawn:K2_AttachToActor(actor, socketName or 'headSocket', 2, 2, 2, false)
         end)
         if ok and err == false then ok, err = false, 'carry attach returned false' end
+        if ok then
+            local ox = state and state.CarryOffsetX
+            local oy = state and state.CarryOffsetY
+            local oz = state and state.CarryOffsetZ
+            local op = state and state.CarryOffsetPitch
+            local oya = state and state.CarryOffsetYaw
+            local orl = state and state.CarryOffsetRoll
+            if type(ox) ~= 'number' then ox = actor.HTCarryOffsetX end
+            if type(oy) ~= 'number' then oy = actor.HTCarryOffsetY end
+            if type(oz) ~= 'number' then oz = actor.HTCarryOffsetZ end
+            if type(op) ~= 'number' then op = actor.HTCarryOffsetPitch end
+            if type(oya) ~= 'number' then oya = actor.HTCarryOffsetYaw end
+            if type(orl) ~= 'number' then orl = actor.HTCarryOffsetRoll end
+            ox = tonumber(ox) or 0; oy = tonumber(oy) or 0; oz = tonumber(oz) or 0
+            op = tonumber(op) or 0; oya = tonumber(oya) or 0; orl = tonumber(orl) or 0
+            ok, err = pcall(function()
+                return pawn:K2_SetActorRelativeLocation({X = ox, Y = oy, Z = oz}, false, {}, true)
+            end)
+            if ok and (op ~= 0 or oya ~= 0 or orl ~= 0) then
+                ok, err = pcall(function()
+                    return pawn:K2_SetActorRelativeRotation(
+                        {Pitch = op, Yaw = oya, Roll = orl}, false, {}, true)
+                end)
+            end
+        end
     else
         if not valid(actor.BindPoint) then log('post has no BindPoint') return end
         ok, err = pcall(function()
@@ -136,6 +234,9 @@ local function grab(actor, kind, socketName)
     -- pawn's relative position. Suspend it for the hold and restore the saved state.
     pawn.CharacterMovement:SetMovementMode(0) -- MOVE_None
     pawn.CharacterMovement:SetComponentTickEnabled(false)
+    if kind == 'carry' then
+        applyCarryCollision(pawn, actor, true)
+    end
     log('attached local pawn to ' .. kind)
 end
 
@@ -143,14 +244,15 @@ end
 function P.Carrier(actor, state)
     if not valid(actor) then return end
     if not accepts(actor, state) then return end
-    if wants(state, {'Grabbing', 'Carrying', 'PuttingDown'}) then
+    local stage = state and (state.Stage or state.State)
+    if stage == 'Grabbing' then
+        stopCarryAnimation(actor)
+        -- Keep the player visible for the whole grab/carry (no SetActorHiddenInGame).
+    elseif stage == 'Carrying' or stage == 'PuttingDown' then
         local pawn = pawnOf(state.PlayerKey)
-        if pawn then
-            concealedByCarrier[actor] = pawn
-            conceal(pawn)
-        end
+        if pawn then startCarryAnimation(actor, pawn) end
     else
-        restoreConcealed(actor)
+        stopCarryAnimation(actor)
     end
     if wants(state, {'Grabbing', 'Carrying', 'PuttingDown'}) then
         Camera.Start(actor, 'carry')
@@ -158,7 +260,7 @@ function P.Carrier(actor, state)
         Camera.Stop(actor)
     end
     if wants(state, {'Carrying', 'PuttingDown'}) then
-        grab(actor, 'carry', state.CarrySocket)
+        grab(actor, 'carry', state.CarrySocket, state)
     elseif holding and holding.actor == actor then
         release(nil)
     end
@@ -171,7 +273,7 @@ function P.Bind(actor, state)
     StruggleUI.Update(actor, state)
     if wants(state, {'Imprisoned'}) then
         Camera.Start(actor, 'bind')
-        grab(actor, 'bind', nil)
+        grab(actor, 'bind', nil, state)
     elseif holding and holding.actor == actor then
         Camera.Stop(actor)
         release(nil)
@@ -183,16 +285,17 @@ end
 function P.End(actor)
     StruggleUI.End(actor)
     Camera.Stop(actor)
-    restoreConcealed(actor)
+    stopCarryAnimation(actor)
     if holding and holding.actor == actor then release(nil) end
     applied[actor] = nil
 end
 
--- Server-side counterpart for listen-server visibility. Dedicated servers have no
--- local view, while every remote client applies the same hide from OnRep.
+-- Kept for call-site compatibility. Hiding the captured player was removed
+-- (2026-11-06): only force-visible when asked to show; never hide.
 function P.SetConcealed(pawn, hidden)
     if not valid(pawn) then return end
-    pcall(function() return pawn:SetActorHiddenInGame(hidden == true) end)
+    if hidden then return end
+    pcall(function() return pawn:SetActorHiddenInGame(false) end)
 end
 
 -- Used by presentation tests and by the debug log line only.

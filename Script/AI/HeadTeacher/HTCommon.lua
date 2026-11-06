@@ -19,6 +19,10 @@ M.Defaults = {
     -- Capture sequence. CaptureService reads these through M.config so a blueprint
     -- variable of the same name overrides the default per monster instance.
     HTCarrySocket = "headSocket",
+    -- Relative hang pose after SnapToTarget attach (actor space: +X forward, +Y right, +Z up).
+    -- Blueprint vars of the same name override these per monster instance.
+    HTCarryOffsetX = 0, HTCarryOffsetY = 0, HTCarryOffsetZ = 0,
+    HTCarryOffsetPitch = 0, HTCarryOffsetYaw = 0, HTCarryOffsetRoll = 0,
     HTPickupDuration = 0.6, HTPutDownDuration = 0.6,
     HTEscortSpeed = 300, HTArriveRadius = 120, HTEscortTimeout = 20,
     HTImprisonDuration = 15, HTStruggleInterval = 0.15,

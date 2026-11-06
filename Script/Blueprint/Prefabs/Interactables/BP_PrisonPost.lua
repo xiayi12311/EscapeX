@@ -1,17 +1,14 @@
 local Service = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureService')
 local Presentation = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CapturePresentation')
 
--- Synced fields and defaults live in the Lua table itself, the pattern the official
--- variable-sync doc uses (gp-docs/wiki/298.md). Blueprint variables of the same name
--- can override them later without touching this file.
+-- PrisonState is Lua-declared and replicated (wiki/20457). PostId/RescueRadius/
+-- RescueDuration/StrugglePresses/BindHeightOffset already exist as Blueprint
+-- variables on BP_PrisonPost; declaring them again in this table triggers
+-- "Lua Script Name Conflict" at DS load. Keep config defaults on the BP only.
 local Post = {
     PrisonState = {PlayerKey = -1, State = 'Free', PostId = '', Revision = 0},
-    PostId = 0,
-    RescueRadius = 220,
-    RescueDuration = 3,
-    StrugglePresses = 8,
-    BindHeightOffset = 90,
 }
+
 
 function Post:GetReplicatedProperties()
     return 'PrisonState'

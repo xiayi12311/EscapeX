@@ -202,6 +202,61 @@ local function setSimulatedMovement(pawn, on)
     if not ok then log('setSimulatedMovement(' .. tostring(on) .. ') failed: ' .. tostring(err)) end
 end
 
+-- Carrier jitter during escort: the hung player capsule overlaps the monster body.
+-- Channel ignore on BeginPlay is not enough once the pawn is attached on-side;
+-- mutual IgnoreActorWhenMoving + NoCollision on the pawn capsule removes the shove.
+local carryPairs = {} -- pawn -> {monster=, capsuleEnabled=}
+local function setMoveIgnore(comp, actor, ignore)
+    if not (valid(comp) and valid(actor)) then return end
+    pcall(function() return comp:IgnoreActorWhenMoving(actor, ignore == true) end)
+end
+
+local function setCarryPairCollision(pawn, monster, enable)
+    if not valid(pawn) then
+        if pawn then carryPairs[pawn] = nil end
+        return
+    end
+    if enable then
+        if not valid(monster) then return end
+        local saved = carryPairs[pawn]
+        if not saved then
+            local enabled = 3
+            pcall(function()
+                if valid(pawn.CapsuleComponent) then
+                    enabled = pawn.CapsuleComponent:GetCollisionEnabled()
+                end
+            end)
+            carryPairs[pawn] = {monster = monster, capsuleEnabled = enabled}
+        else
+            saved.monster = monster
+        end
+        setMoveIgnore(pawn.CapsuleComponent, monster, true)
+        setMoveIgnore(monster.CapsuleComponent, pawn, true)
+        if valid(monster.HitBox) then setMoveIgnore(monster.HitBox, pawn, true) end
+        pcall(function()
+            if valid(pawn.CapsuleComponent) then
+                pawn.CapsuleComponent:SetCollisionEnabled(0) -- NoCollision
+            end
+        end)
+        HT.ignorePlayers(monster)
+    else
+        local saved = carryPairs[pawn]
+        local m = monster or (saved and saved.monster)
+        if valid(m) then
+            setMoveIgnore(pawn.CapsuleComponent, m, false)
+            setMoveIgnore(m.CapsuleComponent, pawn, false)
+            if valid(m.HitBox) then setMoveIgnore(m.HitBox, pawn, false) end
+        end
+        local restore = (saved and saved.capsuleEnabled) or 3
+        pcall(function()
+            if valid(pawn.CapsuleComponent) then
+                pawn.CapsuleComponent:SetCollisionEnabled(restore)
+            end
+        end)
+        carryPairs[pawn] = nil
+    end
+end
+
 -- BindPoint cannot be raised through the editor scripting layer (RelativeLocation is
 -- a struct property this binding refuses to set), so the bind height is a post
 -- variable applied after attaching. Designers can also move BindPoint in the BP.
@@ -221,6 +276,41 @@ local function bindHeight(post)
         if type(v) == 'number' then return v end
     end
     return Config.Defaults.BindHeightOffset
+end
+
+-- Hang pose on the carrier after SnapToTarget attach. Actor-space centimetres /
+-- degrees; HTCarryOffset* blueprint vars override HTCommon.Defaults per instance.
+local function carryOffsetOf(monster)
+    return {
+        X = HT.config(monster, 'HTCarryOffsetX'),
+        Y = HT.config(monster, 'HTCarryOffsetY'),
+        Z = HT.config(monster, 'HTCarryOffsetZ'),
+        Pitch = HT.config(monster, 'HTCarryOffsetPitch'),
+        Yaw = HT.config(monster, 'HTCarryOffsetYaw'),
+        Roll = HT.config(monster, 'HTCarryOffsetRoll'),
+    }
+end
+
+local function applyCarryOffset(pawn, offset)
+    if not valid(pawn) or type(offset) ~= 'table' then return true end
+    local x = tonumber(offset.X) or 0
+    local y = tonumber(offset.Y) or 0
+    local z = tonumber(offset.Z) or 0
+    local pitch = tonumber(offset.Pitch) or 0
+    local yaw = tonumber(offset.Yaw) or 0
+    local roll = tonumber(offset.Roll) or 0
+    local ok, err = pcall(function()
+        return pawn:K2_SetActorRelativeLocation({X = x, Y = y, Z = z}, false, {}, true)
+    end)
+    if not ok then log('carry offset location failed: ' .. tostring(err)); return false end
+    if pitch ~= 0 or yaw ~= 0 or roll ~= 0 then
+        ok, err = pcall(function()
+            return pawn:K2_SetActorRelativeRotation(
+                {Pitch = pitch, Yaw = yaw, Roll = roll}, false, {}, true)
+        end)
+        if not ok then log('carry offset rotation failed: ' .. tostring(err)); return false end
+    end
+    return true
 end
 
 local function placeAt(pawn, location)
@@ -256,6 +346,9 @@ local function publishMonster(monster, data)
     monster.HTCaptureState = {
         SessionId = data.SessionId, PlayerKey = data.PlayerKey, PostId = data.PostId,
         Stage = data.State, Revision = data.Revision, CarrySocket = data.CarrySocket,
+        CarryOffsetX = data.CarryOffsetX, CarryOffsetY = data.CarryOffsetY,
+        CarryOffsetZ = data.CarryOffsetZ, CarryOffsetPitch = data.CarryOffsetPitch,
+        CarryOffsetYaw = data.CarryOffsetYaw, CarryOffsetRoll = data.CarryOffsetRoll,
         VisionSignature = current and current.VisionSignature,
         VisionPlayerKeys = current and current.VisionPlayerKeys,
         VisionProgress = current and current.VisionProgress,
@@ -332,20 +425,30 @@ local function emit(data, kind, reason, post, monster)
             return
         end
         setInvincible(pawn, true)
-        Presentation.SetConcealed(pawn, true)
+        -- Keep player visible during grab (no SetActorHiddenInGame).
+        setCarryPairCollision(pawn, monster, true)
     elseif kind == 'Carrying' then
+        Presentation.SetConcealed(pawn, false)
         setSimulatedMovement(pawn, false)
+        setCarryPairCollision(pawn, monster, true)
         local ok, err = attach(pawn, monster, data.CarrySocket)
         if not ok then
             log('server carry attach failed (' .. tostring(err) .. '); releasing session')
             setSimulatedMovement(pawn, true)
+            setCarryPairCollision(pawn, monster, false)
             failSession(data.SessionId, 'CARRY_ATTACH_FAILED')
             -- failSession already emitted Released; publishing the stale Carrying
             -- snapshot afterwards would re-attach the player on their own client.
             return
         end
+        if not applyCarryOffset(pawn, data.CarryOffset or carryOffsetOf(monster)) then
+            setCarryPairCollision(pawn, monster, false)
+            failSession(data.SessionId, 'CARRY_OFFSET_FAILED')
+            return
+        end
     elseif kind == 'Imprisoned' then
         detach(pawn)
+        setCarryPairCollision(pawn, monster, false)
         Presentation.SetConcealed(pawn, false)
         local ok, err = attach(pawn, post and post.actor or nil, nil)
         if not ok then
@@ -365,6 +468,7 @@ local function emit(data, kind, reason, post, monster)
         setFrozen(pawn, false)
         setInvincible(pawn, false)
         detach(pawn)
+        setCarryPairCollision(pawn, monster, false)
         setSimulatedMovement(pawn, true)
         -- Only a player who was actually bound gets re-anchored at the post; an escort
         -- that failed halfway must be released where they stand (plan section 7).
@@ -482,6 +586,13 @@ function Service.StartCapture(gm, monster, target)
         EscortSpeed = HT.config(monster, 'HTEscortSpeed'),
         ArriveRadius = HT.config(monster, 'HTArriveRadius'),
         CarrySocket = socket,
+        CarryOffset = carryOffsetOf(monster),
+        CarryOffsetX = HT.config(monster, 'HTCarryOffsetX'),
+        CarryOffsetY = HT.config(monster, 'HTCarryOffsetY'),
+        CarryOffsetZ = HT.config(monster, 'HTCarryOffsetZ'),
+        CarryOffsetPitch = HT.config(monster, 'HTCarryOffsetPitch'),
+        CarryOffsetYaw = HT.config(monster, 'HTCarryOffsetYaw'),
+        CarryOffsetRoll = HT.config(monster, 'HTCarryOffsetRoll'),
     }, nil)
     m:FlushEvents()
     if started and not m:GetSnapshot(sessionId) then

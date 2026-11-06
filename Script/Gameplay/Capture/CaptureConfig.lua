@@ -3,6 +3,8 @@ local C = {}
 
 -- Monster-side values are mirrored as HT* keys in HTCommon.M.Defaults so that a
 -- blueprint variable of the same name can override them per monster instance.
+C.CarryPresentation = { AnimationPath = 'Asset/Anim/CH_OnBack.CH_OnBack', Loop = true }
+
 C.Defaults = {
     PickupDuration = 0.6,
     PutDownDuration = 0.6,
@@ -20,6 +22,9 @@ C.Defaults = {
     -- Height compensation for the bind point, whose own RelativeLocation cannot be
     -- authored through the editor scripting layer.
     BindHeightOffset = 90,
+    -- Mirrored on the monster as HTCarryOffset*; actor-space hang pose after attach.
+    CarryOffsetX = 0, CarryOffsetY = 0, CarryOffsetZ = 0,
+    CarryOffsetPitch = 0, CarryOffsetYaw = 0, CarryOffsetRoll = 0,
 }
 
 C.States = {

@@ -38,6 +38,12 @@
 ---@field HTStruggleInterval float
 ---@field HTDiagnosticInterval float
 ---@field HTDebug bool
+---@field HTCarryOffsetX float
+---@field HTCarryOffsetY float
+---@field HTCarryOffsetZ float
+---@field HTCarryOffsetPitch float
+---@field HTCarryOffsetYaw float
+---@field HTCarryOffsetRoll float
 --Edit Below--
 local TheHeadTeacher = {}
 local destroyEnemyArrow
@@ -224,7 +230,10 @@ end
 
 function TheHeadTeacher:GetReplicatedProperties()
     return "HTDetectionEnabled", "HTViewDistance", "HTViewFullAngle",
-        "HTConePitch", "HTConeYaw", "HTConeRoll", "HTAttachSocket", "HTCaptureState"
+        "HTConePitch", "HTConeYaw", "HTConeRoll", "HTAttachSocket",
+        "HTCarryOffsetX", "HTCarryOffsetY", "HTCarryOffsetZ",
+        "HTCarryOffsetPitch", "HTCarryOffsetYaw", "HTCarryOffsetRoll",
+        "HTCaptureState"
 end
 
 function TheHeadTeacher:OnRep_HTViewDistance() H.setupCone(self) end
