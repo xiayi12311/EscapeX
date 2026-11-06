@@ -4,7 +4,6 @@
 ---@field SkeletalMesh USkeletalMeshComponent
 ---@field Scene USceneComponent
 ---@field EffectSequence UActorSequenceComponent
----@field EffectMesh UStaticMeshComponent
 ---@field TriggerArea UBoxComponent
 ---@field DefaultSceneRoot USceneComponent
 ---@field EffectAudience int32

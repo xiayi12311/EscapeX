@@ -1,7 +1,15 @@
+---@class UGCPlayerController_C
+---@field StartSequenceEnabled bool
+---@field StartSequencePath FString
+---@field StartSequencePlayRate float
+---@field StartSequenceRestoreState bool
+---@field StartSequenceFreezePlayers bool
+--Edit Below--
 local DeskSearch=UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskSearchService')
 local Capture=UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureService')
 local Focus=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskFocusPresentation')
 local FirstPerson=UGCGameSystem.UGCRequire('Script.Gameplay.FirstPerson')
+local StartSequence=UGCGameSystem.UGCRequire('Script.Gameplay.StartSequence')
 local PlayerController={}
 
 -- The controller is the stable local-session owner: pawns are replaced on respawn, so the
@@ -11,10 +19,12 @@ function PlayerController:ReceiveBeginPlay()
     PlayerController.SuperClass.ReceiveBeginPlay(self)
     Focus.Monitor()
     FirstPerson.MonitorLocal(self)
+    StartSequence.PlayLocal(self)
 end
 
 function PlayerController:ReceiveEndPlay(reason)
     FirstPerson.StopLocal(self)
+    StartSequence.StopLocal(self)
     PlayerController.SuperClass.ReceiveEndPlay(self,reason)
 end
 
@@ -22,7 +32,7 @@ end
 -- accepted from the client. The existing service validates desk registration,
 -- character state, range and exclusivity on the server.
 function PlayerController:GetAvailableServerRPCs()
-    return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle'
+    return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle', 'ServerRPC_StartSequenceFreeze', 'ServerRPC_StartSequenceRestore'
 end
 
 function PlayerController:ServerRequestStruggle(post, sessionId)
@@ -59,6 +69,20 @@ function PlayerController:ServerCancelDeskSearch(desk, sequence)
     DeskSearch.CancelPlayer(UGCGameSystem.GetGameMode(),self,'PLAYER_CANCELLED')
 end
 
+
+function PlayerController:ServerRPC_StartSequenceFreeze()
+    if not self:HasAuthority() then return end
+    if self.StartSequenceFreezePlayers == false then return end
+    local gm = UGCGameSystem.GetGameMode()
+    StartSequence.ServerFreezeAll(gm)
+end
+
+function PlayerController:ServerRPC_StartSequenceRestore()
+    if not self:HasAuthority() then return end
+    if self.StartSequenceFreezePlayers == false then return end
+    local gm = UGCGameSystem.GetGameMode()
+    StartSequence.ServerRestoreAll(gm)
+end
 function PlayerController:UGC_PlayerLostConnectionEvent()
     PlayerController.SuperClass.UGC_PlayerLostConnectionEvent(self)
     if self:HasAuthority() then

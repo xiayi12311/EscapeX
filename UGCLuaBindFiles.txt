@@ -20,6 +20,7 @@ Script/Blueprint/Prefabs/Items/object/key1.lua
 Script/Blueprint/Prefabs/Items/object/key2.lua
 Script/Blueprint/Prefabs/Items/object/paper1.lua
 Script/Blueprint/Prefabs/Items/object/paper2.lua
+Script/Blueprint/Prefabs/Monsters/NormalZombie.lua
 Script/Blueprint/Prefabs/Monsters/TheHeadTeacher.lua
 Script/Blueprint/Prefabs/Monsters/Zombie.lua
 Script/Blueprint/Prefabs/Projectiles/ZombieBossProj.lua
@@ -55,6 +56,7 @@ Script/Gameplay/Interaction/DeskClock.lua
 Script/Gameplay/Interaction/DeskFocusPresentation.lua
 Script/Gameplay/Interaction/FocusState.lua
 Script/Gameplay/Interaction/InteractionConfig.lua
+Script/Gameplay/StartSequence.lua
 Script/MIG/Blueprint/AI_PatientMonster/WBP_Interact_patient.lua
 Script/MIG/UI/Hospital/WBP_Interact.lua
 Script/UI/EnemyArrow/HTArrowConfig.lua
