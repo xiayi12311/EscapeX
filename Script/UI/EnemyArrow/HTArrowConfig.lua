@@ -5,8 +5,9 @@ return {
     LockSound = 'Asset/WwiseEvent/RedWarning.RedWarning',
     NearSound = 'Asset/WwiseEvent/YellowWarning.YellowWarning',
     WhiteSound = 'Asset/WwiseEvent/WhiteWarning.WhiteWarning',
-    -- Client-side visual duration; tune alongside the monster detection delay.
-    DetectionProgressSeconds = 1.0,
-    ProgressRefreshInterval = 0.016,
-    ProgressReturnPerSecond = 4,
+    -- Whole-arrow red overlay alpha while the target is being detected.
+    RedOverlayFadeInSeconds = 1.0,
+    RedOverlayFadeOutPerSecond = 4,
+    RedOverlayMaxAlpha = 1.0,
+    RedOverlayRefreshInterval = 0.016,
 }

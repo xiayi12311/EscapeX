@@ -1,0 +1,81 @@
+-- Pure Lua checks for PushPullManager. Run from the UGC project root with:
+--   lua Tests/pushpull_manager_test.txt
+local Manager = assert(loadfile('Script/Gameplay/PushPull/PushPullManager.lua'))()
+local Config = assert(loadfile('Script/Gameplay/PushPull/PushPullConfig.lua'))()
+
+local durations = {
+    OnPosition = 1.333, Idle = 1.533,
+    PushStart = 1.333, Push = 2.100, PushStop = 0.800,
+    PullStart = 0.600, Pull = 1.000, PullStop = 0.733,
+}
+
+local function near(a, b, epsilon)
+    return math.abs(a - b) <= (epsilon or 0.0001)
+end
+
+local function crateRecord(x, y, z, hx, hy, hz)
+    return {X=x, Y=y, Z=z, Yaw=0, HalfExtentX=hx, HalfExtentY=hy, HalfExtentZ=hz,
+        EdgeMargin=Config.Interaction.EdgeMargin, MinGripSpacing=Config.Interaction.MinGripSpacing}
+end
+
+-- 1. The grip is continuous along a face, not a fixed slot.
+local front = crateRecord(0, 0, 55, 90, 90, 55)
+local g1 = assert(Manager.ResolveGrip(front, {X=135,Y=20,Z=55}, {}, Config.Interaction))
+local g2 = assert(Manager.ResolveGrip(front, {X=135,Y=-20,Z=55}, {}, Config.Interaction))
+assert(g1.FaceIndex == 0 and g2.FaceIndex == 0)
+assert(g1.GripU > g2.GripU)
+assert(near(g1.GripU, (20 + 62) / 124, 0.0001))
+assert(near(g2.GripU, (-20 + 62) / 124, 0.0001))
+local p1 = {FaceIndex=g1.FaceIndex, GripU=g1.GripU, GripStandOff=g1.GripStandOff}
+assert(near(Manager.GripWorld(front, p1).X, 135))
+
+-- 2. A conflicting point searches only on the same face and keeps 70 cm spacing.
+local occupied = {[1] = {FaceIndex=0, GripU=97/124, GripStandOff=45}}
+local spread = assert(Manager.ResolveGrip(front, {X=135,Y=0,Z=55}, occupied, Config.Interaction))
+assert(spread.FaceIndex == 0)
+local a = Manager.GripWorld(front, occupied[1])
+local b = Manager.GripWorld(front, spread)
+local dx, dy = a.X-b.X, a.Y-b.Y
+assert(math.sqrt(dx*dx+dy*dy) >= Config.Interaction.MinGripSpacing - 0.001)
+assert(math.abs(spread.GripU - 0.5) <= Config.Interaction.AutoSpreadMax / 124 + 0.001)
+
+-- 3. No free grip is explicit.
+local strict = {}
+for k,v in pairs(Config.Interaction) do strict[k]=v end
+strict.MinGripSpacing = 1000
+local blocked, reason = Manager.ResolveGrip(front, {X=135,Y=0,Z=55}, occupied, strict)
+assert(blocked == nil and reason == 'NO_FREE_GRIP')
+
+-- 4. Force composition: same direction adds, opposite direction cancels.
+local forceUsers = {
+    [1]={FaceIndex=0, Intent=1, Phase='Active'},
+    [2]={FaceIndex=0, Intent=1, Phase='Active'},
+}
+local dx1,dy1,m1 = Manager.CombineForce(forceUsers, Config.Movement.OppositionDeadzone)
+assert(near(dx1,-1) and near(dy1,0) and near(m1,2))
+forceUsers[2].FaceIndex = 2
+local dx2,dy2,m2 = Manager.CombineForce(forceUsers, Config.Movement.OppositionDeadzone)
+assert(dx2 == 0 and dy2 == 0 and m2 == 0)
+
+-- 5. Entering -> Idle -> Push -> Stop -> Idle.
+local m = Manager.New(Config, durations)
+local actor = {}
+local rec = m:RegisterCrate(actor, 'Crate_A')
+m:SetCrateGeometry(actor, {X=0,Y=0,Z=55}, 0, {X=90,Y=90,Z=55})
+local p = assert(m:RequestEntry(actor, 10001, {X=135,Y=0,Z=55}, {X=-1,Y=0}, 0))
+assert(p.Phase == 'Entering' and p.AnimState == 'OnPosition')
+m:Tick(1.34, 0.05)
+p = rec.Participants[10001]
+assert(p.Phase == 'Active' and p.AnimState == 'Idle')
+m:Tick(1.39, 0.05)
+assert(m:SetIntent(actor, 10001, rec.SessionId, 1, 1.40))
+assert(p.AnimState == 'PushStart')
+m:SetIntent(actor, 10001, rec.SessionId, 1, 2.70)
+m:Tick(2.74, 0.05)
+assert(p.AnimState == 'Push')
+assert(m:SetIntent(actor, 10001, rec.SessionId, 0, 2.80))
+assert(p.AnimState == 'PushStop')
+m:Tick(3.61, 0.05)
+assert(p.AnimState == 'Idle')
+
+print('pushpull_manager_test: PASS')

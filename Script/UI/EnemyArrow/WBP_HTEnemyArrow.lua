@@ -1,9 +1,9 @@
 ---@class WBP_HTEnemyArrow_C:UUserWidget
 ---@field CanvasPanel_Arrow UCanvasPanel
 ---@field Image_Arrow UImage
+---@field Image_RedOverlay UImage
 ---@field InScreenPnl UCanvasPanel
 ---@field OutScreenPnl UCanvasPanel
----@field ProgressBar_0 UProgressBar
 --Edit Below--
 local WBP_HTEnemyArrow = {}
 
@@ -73,6 +73,15 @@ local function setImageTexture(image, texture)
         return
     end
     image:SetBrushFromTexture(texture, false)
+end
+
+local function applyRedOverlayAlpha(self, alpha)
+    if not self.Image_RedOverlay then
+        return
+    end
+    local value = finite(alpha) and alpha or 0
+    value = math.max(0, math.min(1, value)) * Config.RedOverlayMaxAlpha
+    self.Image_RedOverlay:SetOpacity(value)
 end
 
 local function setArrowTransform(self, angle)
@@ -216,7 +225,7 @@ local function stopDetectionSound(self)
     self.DetectionSoundId = nil
 end
 
-local updateProgress
+local updateRedOverlay
 
 function WBP_HTEnemyArrow:SetTargetActor(target)
     self.TargetActor = target
@@ -238,8 +247,8 @@ function WBP_HTEnemyArrow:Refresh()
 
     local detected, locked = localDetection(self)
     if detected ~= self.DebugDetected or locked ~= self.DebugLocked then
-        ugcprint(string.format('[HTArrow] detection=%s locked=%s progress=%.3f',
-            tostring(detected), tostring(locked), self.DetectionProgress))
+        ugcprint(string.format('[HTArrow] detection=%s locked=%s redAlpha=%.3f',
+            tostring(detected), tostring(locked), self.RedOverlayAlpha))
         self.DebugDetected = detected
         self.DebugLocked = locked
     end
@@ -254,16 +263,13 @@ function WBP_HTEnemyArrow:Refresh()
     self.WasDetecting = detected and not locked
     self.WasLocked = locked
     if locked then
-        self.DetectionProgress = 1
+        self.RedOverlayAlpha = 1
     elseif self.WasDetecting and not wasDetecting then
-        self.DetectionProgress = 0
+        self.RedOverlayAlpha = 0
     end
-    local showingProgress = detected or locked or self.DetectionProgress > 0
-    self.ProgressBar_0:SetPercent(self.DetectionProgress)
-    self.ProgressBar_0:SetVisibility(showingProgress and 4 or 1)
-    local visibleTier = locked and State.RED
-        or showingProgress and State.YELLOW
-        or baseTier
+    applyRedOverlayAlpha(self, self.RedOverlayAlpha)
+    local showDetectionColor = detected or locked or self.RedOverlayAlpha > 0
+    local visibleTier = showDetectionColor and State.YELLOW or baseTier
     applyTier(self, visibleTier)
     if visibleTier == State.WHITE and self.PreviousVisibleTier == nil then
         playSound(self, 'WhiteSound')
@@ -276,12 +282,15 @@ end
 function WBP_HTEnemyArrow:Construct()
     self.CurrentArrowTier = nil
     self.PreviousVisibleTier = nil
-    self.DetectionProgress = 0
+    self.RedOverlayAlpha = 0
     self.CanvasPanel_Arrow:SetRenderTransformPivot({X = 0.5, Y = 0.5})
     setArrowTransform(self, 0)
     self.InScreenPnl:SetVisibility(1)
     self.OutScreenPnl:SetVisibility(4)
     applyTier(self, State.WHITE)
+    setImageTexture(self.Image_RedOverlay, loadTexture(State.RED))
+    self.Image_RedOverlay:SetVisibility(4)
+    applyRedOverlayAlpha(self, self.RedOverlayAlpha)
     if not self.ArrowRefreshTimer then
         local timer
         timer = UGCTimerUtility.CreateLuaTimer(0.05, function()
@@ -293,39 +302,38 @@ function WBP_HTEnemyArrow:Construct()
         end, true)
         self.ArrowRefreshTimer = timer
     end
-    if not self.ProgressRefreshTimer then
+    if not self.RedOverlayRefreshTimer then
         local timer
-        timer = UGCTimerUtility.CreateLuaTimer(Config.ProgressRefreshInterval, function()
+        timer = UGCTimerUtility.CreateLuaTimer(Config.RedOverlayRefreshInterval, function()
             if not KismetSystemLibrary.IsValid(self) then
                 UGCTimerUtility.RemoveLuaTimer(timer)
                 return
             end
             local player = getPlayer(self)
-            if not player then self.ProgressLastTime = nil; return end
+            if not player then self.RedOverlayLastTime = nil; return end
             local now = UGCGameSystem.GetTimeSeconds(player)
-            local delta = self.ProgressLastTime and math.max(0, now - self.ProgressLastTime) or 0
-            self.ProgressLastTime = now
-            updateProgress(self, delta)
+            local delta = self.RedOverlayLastTime and math.max(0, now - self.RedOverlayLastTime) or 0
+            self.RedOverlayLastTime = now
+            updateRedOverlay(self, delta)
         end, true)
-        self.ProgressRefreshTimer = timer
+        self.RedOverlayRefreshTimer = timer
     end
 end
 
-function updateProgress(self, DeltaTime)
+function updateRedOverlay(self, DeltaTime)
     if self.WasLocked then
-        self.DetectionProgress = 1
+        self.RedOverlayAlpha = 1
     elseif self.WasDetecting then
-        local duration = Config.DetectionProgressSeconds
+        local duration = Config.RedOverlayFadeInSeconds
         if duration == 0 then
-            self.DetectionProgress = 1
+            self.RedOverlayAlpha = 1
         elseif finite(duration) and duration > 0 then
-            self.DetectionProgress = math.min(1, self.DetectionProgress + DeltaTime / duration)
+            self.RedOverlayAlpha = math.min(1, self.RedOverlayAlpha + DeltaTime / duration)
         end
     else
-        self.DetectionProgress = math.max(0, self.DetectionProgress - Config.ProgressReturnPerSecond * DeltaTime)
+        self.RedOverlayAlpha = math.max(0, self.RedOverlayAlpha - Config.RedOverlayFadeOutPerSecond * DeltaTime)
     end
-    self.ProgressBar_0:SetPercent(self.DetectionProgress)
-    self.ProgressBar_0:SetVisibility((self.WasDetecting or self.WasLocked or self.DetectionProgress > 0) and 4 or 1)
+    applyRedOverlayAlpha(self, self.RedOverlayAlpha)
 end
 
 function WBP_HTEnemyArrow:Destruct()
@@ -334,9 +342,9 @@ function WBP_HTEnemyArrow:Destruct()
         UGCTimerUtility.RemoveLuaTimer(self.ArrowRefreshTimer)
         self.ArrowRefreshTimer = nil
     end
-    if self.ProgressRefreshTimer then
-        UGCTimerUtility.RemoveLuaTimer(self.ProgressRefreshTimer)
-        self.ProgressRefreshTimer = nil
+    if self.RedOverlayRefreshTimer then
+        UGCTimerUtility.RemoveLuaTimer(self.RedOverlayRefreshTimer)
+        self.RedOverlayRefreshTimer = nil
     end
     self.TargetActor = nil
 end

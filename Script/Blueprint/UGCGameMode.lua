@@ -3,6 +3,7 @@
 local UGCGameMode = {}
 local TestRevive = UGCGameSystem.UGCRequire("Script.Common.TestAutoRevive")
 local DeskSearch = UGCGameSystem.UGCRequire("Script.Gameplay.Desk.DeskSearchService")
+local PushPull = UGCGameSystem.UGCRequire("Script.Gameplay.PushPull.PushPullService")
 local Capture = UGCGameSystem.UGCRequire("Script.Gameplay.Capture.CaptureService")
 local FirstPerson = UGCGameSystem.UGCRequire("Script.Gameplay.FirstPerson")
 
@@ -17,9 +18,11 @@ function UGCGameMode:ReceiveBeginPlay()
     TestRevive.setup(self)
     DeskSearch.Setup(self)
     Capture.Setup(self)
+    PushPull.Setup(self)
 end
 
 function UGCGameMode:ReceiveEndPlay(Reason)
+    PushPull.Shutdown(self)
     FirstPerson.Shutdown()
     Capture.Shutdown(self)
     DeskSearch.Shutdown(self)
@@ -50,6 +53,7 @@ end
 -- first so all active searches and delayed reveals are invalidated before count 0.
 function UGCGameMode:OnPlayerCaptured(PlayerKey, CaptureSessionId)
     assert(self:HasAuthority(), 'capture round reset is server-only')
+    PushPull.CancelPlayer(self, PlayerKey, 'PLAYER_BUSY')
     local ok, reason = self:ResetAllDesks()
     assert(ok, 'capture desk reset failed: ' .. tostring(reason))
     assert(self:ResetOpenedCount(), 'capture desk count reset failed')
@@ -63,6 +67,7 @@ function UGCGameMode:UGC_PlayerKilledEvent(Killer, VictimPlayer, VictimPawn, Dam
     TestRevive.onKilled(self, Killer, VictimPlayer, VictimPawn, DamageType)
     -- An eliminated player must not keep holding a prison post or block their carrier.
     Capture.CancelVictim(self, VictimPlayer, VictimPawn, 'PLAYER_DEAD')
+    PushPull.CancelVictim(self, VictimPlayer, VictimPawn, 'PLAYER_DEAD')
 end
 
 ---玩家复活事件，基类实现为空，生效范围：服务器

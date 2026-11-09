@@ -1,6 +1,7 @@
 local UGCPlayerPawn = {}
 
 function UGCPlayerPawn:ReceiveBeginPlay()
+    self.bVaultIsOpen = true
     UGCPlayerPawn.SuperClass.ReceiveBeginPlay(self)
 end
 

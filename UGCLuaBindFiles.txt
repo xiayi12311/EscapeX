@@ -14,6 +14,7 @@ Script/Blueprint/Prefabs/Interactables/BP_EffectTriggerBase.lua
 Script/Blueprint/Prefabs/Interactables/BP_EffectTriggerExample.lua
 Script/Blueprint/Prefabs/Interactables/BP_EffectTriggerSkeletal_Rebuilt.lua
 Script/Blueprint/Prefabs/Interactables/BP_PrisonPost.lua
+Script/Blueprint/Prefabs/Interactables/BP_PushPullCrate.lua
 Script/Blueprint/Prefabs/Interactables/BP_SearchableDesk.lua
 Script/Blueprint/Prefabs/Interactables/BP_TeacherShowTrigger.lua
 Script/Blueprint/Prefabs/Items/object/key1.lua
@@ -56,6 +57,12 @@ Script/Gameplay/Interaction/DeskClock.lua
 Script/Gameplay/Interaction/DeskFocusPresentation.lua
 Script/Gameplay/Interaction/FocusState.lua
 Script/Gameplay/Interaction/InteractionConfig.lua
+Script/Gameplay/PushPull/PushPullAnimation.lua
+Script/Gameplay/PushPull/PushPullConfig.lua
+Script/Gameplay/PushPull/PushPullFocusPresentation.lua
+Script/Gameplay/PushPull/PushPullManager.lua
+Script/Gameplay/PushPull/PushPullPresentation.lua
+Script/Gameplay/PushPull/PushPullService.lua
 Script/Gameplay/StartSequence.lua
 Script/MIG/Blueprint/AI_PatientMonster/WBP_Interact_patient.lua
 Script/MIG/UI/Hospital/WBP_Interact.lua

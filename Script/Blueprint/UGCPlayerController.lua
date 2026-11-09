@@ -10,6 +10,10 @@ local Capture=UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureService')
 local Focus=UGCGameSystem.UGCRequire('Script.Gameplay.Interaction.DeskFocusPresentation')
 local FirstPerson=UGCGameSystem.UGCRequire('Script.Gameplay.FirstPerson')
 local StartSequence=UGCGameSystem.UGCRequire('Script.Gameplay.StartSequence')
+local PushPullConfig=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullConfig')
+local PushPullService=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullService')
+local PushPullFocus=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullFocusPresentation')
+local PushPullPresentation=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullPresentation')
 local PlayerController={}
 
 -- The controller is the stable local-session owner: pawns are replaced on respawn, so the
@@ -18,11 +22,15 @@ local PlayerController={}
 function PlayerController:ReceiveBeginPlay()
     PlayerController.SuperClass.ReceiveBeginPlay(self)
     Focus.Monitor()
+    PushPullFocus.Monitor()
+    PushPullPresentation.Monitor()
     FirstPerson.MonitorLocal(self)
     StartSequence.PlayLocal(self)
 end
 
 function PlayerController:ReceiveEndPlay(reason)
+    PushPullPresentation.StopMonitor()
+    PushPullFocus.StopMonitor()
     FirstPerson.StopLocal(self)
     StartSequence.StopLocal(self)
     PlayerController.SuperClass.ReceiveEndPlay(self,reason)
@@ -32,7 +40,10 @@ end
 -- accepted from the client. The existing service validates desk registration,
 -- character state, range and exclusivity on the server.
 function PlayerController:GetAvailableServerRPCs()
-    return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle', 'ServerRPC_StartSequenceFreeze', 'ServerRPC_StartSequenceRestore'
+    return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle',
+        'ServerRPC_StartSequenceFreeze', 'ServerRPC_StartSequenceRestore',
+        'ServerRequestPushPull', 'ServerSetPushPullIntent', 'ServerReleasePushPull',
+        'ClientPushPullRejected'
 end
 
 function PlayerController:ServerRequestStruggle(post, sessionId)
@@ -69,7 +80,6 @@ function PlayerController:ServerCancelDeskSearch(desk, sequence)
     DeskSearch.CancelPlayer(UGCGameSystem.GetGameMode(),self,'PLAYER_CANCELLED')
 end
 
-
 function PlayerController:ServerRPC_StartSequenceFreeze()
     if not self:HasAuthority() then return end
     if self.StartSequenceFreezePlayers == false then return end
@@ -83,11 +93,67 @@ function PlayerController:ServerRPC_StartSequenceRestore()
     local gm = UGCGameSystem.GetGameMode()
     StartSequence.ServerRestoreAll(gm)
 end
+
+local function validSequence(sequence)
+    return type(sequence) == 'number' and sequence == math.floor(sequence) and sequence > 0
+end
+
+local function acceptSequence(self, sequence)
+    if not validSequence(sequence) or sequence <= (self.PushPullRequestSequence or 0) then
+        return false
+    end
+    self.PushPullRequestSequence = sequence
+    return true
+end
+
+function PlayerController:ServerRequestPushPull(crate, sequence)
+    if not self:HasAuthority() then return end
+    if not acceptSequence(self, sequence) then
+        if validSequence(sequence) then
+            UnrealNetwork.CallUnrealRPC(self, self, 'ClientPushPullRejected', sequence, 'STALE_REQUEST')
+        end
+        return
+    end
+    local ok, reason = PushPullService.RequestEntry(UGCGameSystem.GetGameMode(), crate, self)
+    if not ok then
+        ugcprint('[PushPull] entry rejected player=' .. tostring(UGCGameSystem.GetPlayerKeyByPlayerController(self))
+            .. ' reason=' .. tostring(reason))
+        UnrealNetwork.CallUnrealRPC(self, self, 'ClientPushPullRejected', sequence, tostring(reason))
+    end
+end
+
+function PlayerController:ServerSetPushPullIntent(crate, sessionId, intent, sequence)
+    if not self:HasAuthority() then return end
+    if not acceptSequence(self, sequence) then return end
+    local now = UGCGameSystem.GetTimeSeconds(self)
+    local minimum = 1 / PushPullConfig.Input.MaxRpcRate
+    local last = self.PushPullLastIntentAt
+    if type(now) ~= 'number' or (last and now - last < minimum) then
+        return
+    end
+    self.PushPullLastIntentAt = now
+    local ok, reason = PushPullService.SetIntent(UGCGameSystem.GetGameMode(), crate, self, sessionId, intent)
+    if not ok and reason ~= 'PLAYER_UNAVAILABLE' then
+        ugcprint('[PushPull] intent rejected reason=' .. tostring(reason))
+    end
+end
+
+function PlayerController:ServerReleasePushPull(crate, sessionId, sequence)
+    if not self:HasAuthority() then return end
+    if not acceptSequence(self, sequence) then return end
+    local ok, reason = PushPullService.Release(UGCGameSystem.GetGameMode(), crate, self, sessionId)
+    if not ok then
+        ugcprint('[PushPull] release rejected reason=' .. tostring(reason))
+    end
+end
+
+
 function PlayerController:UGC_PlayerLostConnectionEvent()
     PlayerController.SuperClass.UGC_PlayerLostConnectionEvent(self)
     if self:HasAuthority() then
         DeskSearch.CancelPlayer(UGCGameSystem.GetGameMode(),self,'DISCONNECTED')
         Capture.CancelPlayer(UGCGameSystem.GetGameMode(),self,'PLAYER_UNAVAILABLE')
+        PushPullService.CancelPlayer(UGCGameSystem.GetGameMode(),self,'PLAYER_UNAVAILABLE')
     end
 end
 
