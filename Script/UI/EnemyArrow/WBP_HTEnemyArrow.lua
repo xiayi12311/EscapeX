@@ -259,16 +259,12 @@ function WBP_HTEnemyArrow:Refresh()
     elseif (not detected or locked) and self.WasDetecting then
         stopDetectionSound(self)
     end
-    local wasDetecting = self.WasDetecting
     self.WasDetecting = detected and not locked
     self.WasLocked = locked
-    if locked then
-        self.RedOverlayAlpha = 1
-    elseif self.WasDetecting and not wasDetecting then
-        self.RedOverlayAlpha = 0
-    end
     applyRedOverlayAlpha(self, self.RedOverlayAlpha)
-    local showDetectionColor = detected or locked or self.RedOverlayAlpha > 0
+    local showDetectionColor = detected
+        or locked
+        or self.RedOverlayAlpha > 0
     local visibleTier = showDetectionColor and State.YELLOW or baseTier
     applyTier(self, visibleTier)
     if visibleTier == State.WHITE and self.PreviousVisibleTier == nil then
@@ -320,16 +316,18 @@ function WBP_HTEnemyArrow:Construct()
     end
 end
 
-function updateRedOverlay(self, DeltaTime)
-    if self.WasLocked then
+local function advanceRedOverlayIn(self, DeltaTime)
+    local duration = Config.RedOverlayFadeInSeconds
+    if duration == 0 then
         self.RedOverlayAlpha = 1
-    elseif self.WasDetecting then
-        local duration = Config.RedOverlayFadeInSeconds
-        if duration == 0 then
-            self.RedOverlayAlpha = 1
-        elseif finite(duration) and duration > 0 then
-            self.RedOverlayAlpha = math.min(1, self.RedOverlayAlpha + DeltaTime / duration)
-        end
+    elseif finite(duration) and duration > 0 then
+        self.RedOverlayAlpha = math.min(1, self.RedOverlayAlpha + DeltaTime / duration)
+    end
+end
+
+function updateRedOverlay(self, DeltaTime)
+    if self.WasLocked or self.WasDetecting then
+        advanceRedOverlayIn(self, DeltaTime)
     else
         self.RedOverlayAlpha = math.max(0, self.RedOverlayAlpha - Config.RedOverlayFadeOutPerSecond * DeltaTime)
     end

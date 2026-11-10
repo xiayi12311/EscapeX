@@ -27,15 +27,27 @@ function Widget:SetButtonVisible(visible)
     end
 end
 
+-- PushPull uses the same button shell but explicitly opts out of every progress visual.
+function Widget:HideProgressVisuals()
+    self.ProgressHidden = true
+    self:SetProgress(nil)
+end
+
 -- nil hides the circle. A number is presentation of server-owned time only.
 function Widget:SetProgress(value)
+    if self.ProgressHidden then value = nil end
     if self.Image_CircleProgress then
         self.Image_CircleProgress:SetVisibility(value ~= nil and ESlateVisibility.SelfHitTestInvisible or ESlateVisibility.Collapsed)
     end
     if self.CircleMaterial then
         self.CircleMaterial:SetScalarParameterValue('Mask_Percent', math.max(0, math.min(1, value or 0)))
     end
-    if self.WBP_Interact_Left then self.WBP_Interact_Left:SetProgress(value or 0) end
+    if self.WBP_Interact_Left then
+        self.WBP_Interact_Left:SetProgress(value or 0)
+        if self.WBP_Interact_Left.SetProgressVisible then
+            self.WBP_Interact_Left:SetProgressVisible(not self.ProgressHidden)
+        end
+    end
 end
 
 -- Project from world into the current viewport, accounting for DPI, canvas anchor,

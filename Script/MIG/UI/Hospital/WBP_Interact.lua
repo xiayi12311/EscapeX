@@ -21,6 +21,12 @@ function Button:SetProgress(value)
     end
 end
 
+function Button:SetProgressVisible(visible)
+    if self.Image_Progress then
+        self.Image_Progress:SetVisibility(visible and ESlateVisibility.SelfHitTestInvisible or ESlateVisibility.Collapsed)
+    end
+end
+
 function Button:OnPressed()
     if self.PressedFeedback then self:SetRenderScale({X=0.9,Y=0.9}) end
     if self.InteractionOwner then self.InteractionOwner:OnSearchPressed() end

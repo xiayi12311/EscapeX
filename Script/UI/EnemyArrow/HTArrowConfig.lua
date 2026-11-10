@@ -6,7 +6,7 @@ return {
     NearSound = 'Asset/WwiseEvent/YellowWarning.YellowWarning',
     WhiteSound = 'Asset/WwiseEvent/WhiteWarning.WhiteWarning',
     -- Whole-arrow red overlay alpha while the target is being detected.
-    RedOverlayFadeInSeconds = 1.0,
+    RedOverlayFadeInSeconds = 2.0,
     RedOverlayFadeOutPerSecond = 4,
     RedOverlayMaxAlpha = 1.0,
     RedOverlayRefreshInterval = 0.016,

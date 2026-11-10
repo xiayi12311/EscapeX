@@ -130,6 +130,7 @@ local function prepareWidget(c)
                 return
             end
             c.widget = widget
+            if widget.HideProgressVisuals then widget:HideProgressVisuals() end
             widget:SetVisibility(ESlateVisibility.Collapsed)
             widget:AddToViewport(20)
             widget:SetRequestHandler(function()
@@ -303,7 +304,17 @@ end
 function F.DebugState()
     local c = current
     if not c then return nil end
-    return {key=c.key, active=valid(c.activeCrate), display=valid(c.display), pending=c.pending ~= nil, label=c.label, anchor=c.anchorWorld ~= nil}
+    local widget = c.widget
+    local circle = nil
+    local inner = nil
+    if valid(widget) then
+        if widget.Image_CircleProgress then circle = widget.Image_CircleProgress:GetVisibility() end
+        if widget.WBP_Interact_Left and widget.WBP_Interact_Left.Image_Progress then
+            inner = widget.WBP_Interact_Left.Image_Progress:GetVisibility()
+        end
+    end
+    return {key=c.key, active=valid(c.activeCrate), display=valid(c.display), pending=c.pending ~= nil,
+        label=c.label, anchor=c.anchorWorld ~= nil, progressHidden=widget and widget.ProgressHidden, circle=circle, inner=inner}
 end
 
 function F.End()
