@@ -2,6 +2,8 @@
 ---@field CrateVisualMesh1 UStaticMeshComponent
 ---@field CrateCollision UBoxComponent
 ---@field DefaultSceneRoot USceneComponent
+---@field CrateRailLength float
+---@field CrateRailStartDistance float
 ---@field CrateRailEnabled bool
 ---@field CrateRailPath USplineComponent
 ---@field CrateId FString

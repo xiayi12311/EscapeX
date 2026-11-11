@@ -41,7 +41,7 @@ function Service:Start(encounterId, instanceId, playerCount, now)
     if not plans then return false, errorCode end
     session:Start(now)
     self.Runs[encounterId] = {Session = session, Plans = plans, Deaths = {}, Actors = {},
-        Cursor = 0, Error = nil, StartPoint = start}
+        Cursor = 0, Error = nil, StartPoint = start, Deferred = {}, RetryAt = 0}
     encounterOwners[start] = self
     self.UsedInstances[instanceId] = true
     return true
@@ -57,6 +57,7 @@ function Service:_spawn(run, request)
         end
     end)
     if not actor then
+        if reason == 'SPAWN_SPACE_OCCUPIED' then return false, reason end
         run.Session:ReportSpawnFailure(request.InstanceId, request.WaveIndex,
             request.Token, reason)
         return false, reason
@@ -102,11 +103,23 @@ function Service:Step(encounterId, now, teamFailed)
         for _, actor in pairs(run.Actors) do Engine.Release(actor) end
         return self:Snapshot(encounterId)
     end
-    local requests, spawnError = session:ClaimSpawns(now)
+    if session.Error then return self:Snapshot(encounterId), session.Error end
+    local requests, spawnError = {}, nil
+    if #run.Deferred == 0 then requests, spawnError = session:ClaimSpawns(now) end
     if not requests then return self:Snapshot(encounterId), spawnError end
-    for _, request in ipairs(requests) do
-        local ok, errorCode = self:_spawn(run, request)
-        if not ok then return self:Snapshot(encounterId), errorCode end
+    for _, request in ipairs(requests) do run.Deferred[#run.Deferred+1] = request end
+    if #run.Deferred > 0 and now >= run.RetryAt then
+        local deferred = {}
+        for _, request in ipairs(run.Deferred) do
+            local ok, errorCode = self:_spawn(run, request)
+            if not ok then
+                if errorCode ~= 'SPAWN_SPACE_OCCUPIED' then return self:Snapshot(encounterId), errorCode end
+                deferred[#deferred+1] = request
+            end
+        end
+        run.Deferred = deferred
+        run.RetryAt = now + session.Config.Waves[session.WaveIndex].IntervalSeconds
+            * session.Config.Difficulties[session.PlayerCount].IntervalMultiplier
     end
     return self:Snapshot(encounterId)
 end

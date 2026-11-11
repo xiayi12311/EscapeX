@@ -392,7 +392,11 @@ function Service.RegisterCrate(gm, crate, crateId)
     if crate.CrateRailEnabled then
         local spline = crate.CrateRailPath
         local reason
-        if not valid(spline) or spline:GetNumberOfSplinePoints() ~= 2 then
+        local parametersOk, parametersReason = Manager.ValidateRailParameters(
+            crate.CrateRailLength, crate.CrateRailStartDistance, Config.Rail.MinLength)
+        if not parametersOk then
+            reason = parametersReason
+        elseif not valid(spline) or spline:GetNumberOfSplinePoints() ~= 2 then
             reason = 'INVALID_RAIL_POINTS'
         elseif spline:IsClosedLoop() then
             reason = 'INVALID_RAIL_CLOSED_LOOP'

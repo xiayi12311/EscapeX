@@ -72,6 +72,7 @@ Script/Gameplay/ZombieDefense/DefenseEngineAdapter.lua
 Script/Gameplay/ZombieDefense/DefensePointRegistry.lua
 Script/Gameplay/ZombieDefense/DefenseService.lua
 Script/Gameplay/ZombieDefense/DefenseSession.lua
+Script/Gameplay/ZombieDefense/DefenseSpawnPlacement.lua
 Script/Gameplay/ZombieDefense/DefenseStartFocus.lua
 Script/Gameplay/ZombieDefense/DefenseStartInteraction.lua
 Script/Gameplay/ZombieDefense/DefenseTestDriver.lua

@@ -1,4 +1,4 @@
-﻿local M=assert(loadfile('Script/Gameplay/PushPull/PushPullManager.lua'))()
+local M=assert(loadfile('Script/Gameplay/PushPull/PushPullManager.lua'))()
 local C=assert(loadfile('Script/Gameplay/PushPull/PushPullConfig.lua'))()
 local function near(a,b) assert(math.abs(a-b)<0.0001,tostring(a)..' != '..tostring(b)) end
 local m=M.New(C,{})
@@ -32,3 +32,13 @@ t=m:RailTarget(actor,100);near(t.X,60);near(t.Y,80)
 m:CommitRailMovement(actor,{X=36,Y=48,Z=55});near(rec.Rail.Progress,60)
 assert(rec.Rail.Endpoint==0)
 print('PASS pushpull rail math: rotated force, perpendicular, endpoints, reversal, diagonal, invalid geometry, commit')
+
+assert(M.ValidateRailParameters(600,0,1))
+assert(M.ValidateRailParameters(600,600,1))
+assert(M.ValidateRailParameters(1200,900,1))
+for _, pair in ipairs({{0,0},{-1,0},{600,-1},{600,601},{math.huge,0},{600,0/0}}) do
+    local ok, reason=M.ValidateRailParameters(pair[1],pair[2],1)
+    assert(not ok and reason=='INVALID_RAIL_PARAMETERS')
+end
+assert(not M.ValidateRailParameters(nil,0,1))
+print('PASS rail instance parameter validation')

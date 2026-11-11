@@ -317,6 +317,18 @@ function M:SetCrateGeometry(actor, location, yaw, halfExtent)
     return true
 end
 
+-- Instance distances use local rail units (cm with actor scale 1).
+function M.ValidateRailParameters(length, start, minLength)
+    local function finite(v)
+        return type(v) == 'number' and v == v and v > -math.huge and v < math.huge
+    end
+    if not finite(length) or length < minLength or not finite(start)
+        or start < 0 or start > length then
+        return false, 'INVALID_RAIL_PARAMETERS'
+    end
+    return true
+end
+
 -- Rail endpoints are captured in WORLD space once: moving the crate must not move its rail.
 function M:ConfigureRail(actor, a, b)
     local rec = self.crates[actor]

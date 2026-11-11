@@ -24,7 +24,20 @@ function Adapter.Prepare(context, points, catalog)
         end
         local class = UE.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(enemy.ClassPath))
         if not class then return nil, 'ENEMY_CLASS_UNAVAILABLE: ' .. enemy.ClassPath end
-        plans[#plans + 1] = {Point = point, Class = class}
+        local placement = enemy.Placement
+        if placement then
+            assert(placement.SearchRadius > 0 and placement.Rings >= 1 and placement.Rings%1 == 0
+                and placement.SamplesPerRing >= 1 and placement.SamplesPerRing%1 == 0
+                and placement.Radius > 0 and placement.HalfHeight >= placement.Radius+placement.Spacing
+                and placement.Spacing >= 0 and placement.GroundClearance > 0, 'INVALID_SPAWN_PLACEMENT')
+            local copy = {}
+            for k,v in pairs(placement) do
+                if type(v)=='table' then local t={};for a,b in pairs(v)do t[a]=b end;copy[k]=t
+                else copy[k]=v end
+            end
+            placement=copy
+        end
+        plans[#plans + 1] = {Point = point, Class = class, Placement = placement}
     end
     return plans
 end
@@ -36,13 +49,20 @@ function Adapter.Spawn(context, plan, onDeath)
         or not KismetSystemLibrary.IsValid(point.SpawnDirection) then
         return nil, 'SPAWN_POINT_UNAVAILABLE'
     end
+    local location = point:K2_GetActorLocation()
+    if plan.Placement then
+        local Placement = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseSpawnPlacement')
+        local reason
+        location, reason = Placement.Find(context,location,plan.Placement,bindings,plan.Class)
+        if not location then return nil,reason end
+    end
     local actor = UGCGenericCharacterSystem.SpawnGenericCharacter(context, plan.Class,
-        point:K2_GetActorLocation(), point.SpawnDirection:K2_GetComponentRotation())
+        location, point.SpawnDirection:K2_GetComponentRotation())
     if not actor or not KismetSystemLibrary.IsValid(actor) then
         return nil, 'ENGINE_SPAWN_FAILED'
     end
     if bindings[actor] then return nil, 'ENEMY_ALREADY_BOUND' end
-    bindings[actor] = {Context = context, OnDeath = onDeath}
+    bindings[actor] = {Context = context, OnDeath = onDeath, Placement = plan.Placement}
     return actor
 end
 
