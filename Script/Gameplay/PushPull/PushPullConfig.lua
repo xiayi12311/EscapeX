@@ -52,6 +52,7 @@ C.Interaction = {
 }
 
 C.Movement = {
+    SweepPositionTolerance = 0.01, -- cm; detect partial swept movement
     BaseSpeed = 55,
     MaxSpeed = 220,
     Acceleration = 240,
@@ -105,12 +106,20 @@ C.Reasons = {
     CRATE_DESTROYED = true,
     CRATE_DISABLED = true,
     PLAYER_UNAVAILABLE = true,
+    PLAYER_AIRBORNE = true,
+    FACE_DISABLED = true,
     PLAYER_BUSY = true,
     TOO_FAR = true,
     WRONG_FACE = true,
     NO_FREE_GRIP = true,
     STALE_REQUEST = true,
     CRATE_BLOCKED = true,
+}
+
+C.Rail = {
+    MinLength = 1,             -- cm; reject degenerate tracks
+    AlignmentTolerance = 0.1, -- cm; horizontal endpoints and initial crate alignment
+    EndpointTolerance = 0.01, -- cm
 }
 
 return C

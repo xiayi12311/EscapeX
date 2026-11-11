@@ -273,9 +273,42 @@ local function applyMovement(manager, crate, dt)
         Y = old.Y + (rec.MotionDirY or 0) * distance,
         Z = old.Z,
     }
-    local moved = crate:K2_SetActorLocation(target, true, {}, true)
-    if not moved then
-        crate:K2_SetActorLocation(old, false, {}, true)
+    if rec.Rail then
+        target = manager:RailTarget(crate, distance)
+        if math.abs(target.X - old.X) + math.abs(target.Y - old.Y) < 0.000001 then
+            manager:CommitRailMovement(crate, old)
+            manager:ClearBlocked(crate)
+            return false
+        end
+    end
+    -- Actor Sweep only tests the root (our root is a non-colliding SceneComponent).
+    -- Sweep the actual oriented collision box over the ENTIRE step before moving.
+    local collision = crate.CrateCollision
+    local start = collision:K2_GetComponentLocation()
+    local finish = {X = start.X + target.X - old.X,
+        Y = start.Y + target.Y - old.Y, Z = start.Z + target.Z - old.Z}
+    local ignored = {crate}
+    for _, participant in pairs(rec.Participants) do
+        local pawn = pawnOf(participant.PlayerKey)
+        if pawn then ignored[#ignored + 1] = pawn end
+    end
+    local hit = {}
+    local blocked = KismetSystemLibrary.BoxTraceSingleByProfile(crate, start, finish,
+        collision:GetScaledBoxExtent(), collision:K2_GetComponentRotation(),
+        collision:GetCollisionProfileName(), false, ignored, EDrawDebugTrace.None, hit, true,
+        {}, {}, 0)
+    if blocked then
+        manager:MarkBlocked(crate)
+        log('CRATE_BLOCKED crate=' .. tostring(rec.CrateId))
+        return true
+    end
+    -- Sweep can move partially and still return true. Keep the safe swept position;
+    -- never teleport back or finish an obstructed step without collision.
+    local moved = crate:K2_SetActorLocation(target, true, {}, false)
+    local actual = crate:K2_GetActorLocation()
+    if rec.Rail then manager:CommitRailMovement(crate, actual) end
+    local dx, dy, dz = actual.X - target.X, actual.Y - target.Y, actual.Z - target.Z
+    if not moved or dx * dx + dy * dy + dz * dz > Config.Movement.SweepPositionTolerance ^ 2 then
         manager:MarkBlocked(crate)
         log('CRATE_BLOCKED crate=' .. tostring(rec.CrateId))
         return true
@@ -356,6 +389,28 @@ function Service.RegisterCrate(gm, crate, crateId)
     if crate.CrateEnabled == false then manager:SetCrateEnabled(crate, false) end
     local location, yaw, extent = geometryOf(crate)
     manager:SetCrateGeometry(crate, location, yaw, extent)
+    if crate.CrateRailEnabled then
+        local spline = crate.CrateRailPath
+        local reason
+        if not valid(spline) or spline:GetNumberOfSplinePoints() ~= 2 then
+            reason = 'INVALID_RAIL_POINTS'
+        elseif spline:IsClosedLoop() then
+            reason = 'INVALID_RAIL_CLOSED_LOOP'
+        elseif spline:GetSplinePointType(0) ~= ESplinePointType.Linear
+            or spline:GetSplinePointType(1) ~= ESplinePointType.Linear then
+            reason = 'INVALID_RAIL_POINT_TYPE'
+        else
+            local a = spline:GetLocationAtSplinePoint(0, ESplineCoordinateSpace.World)
+            local b = spline:GetLocationAtSplinePoint(1, ESplineCoordinateSpace.World)
+            local ok
+            ok, reason = manager:ConfigureRail(crate, a, b)
+            if ok then reason = nil end
+        end
+        if reason then
+            manager:UnregisterCrate(crate)
+            return false, reason
+        end
+    end
     publish(manager, crate)
     log('registered crate=' .. tostring(rec.CrateId) .. ' session=' .. tostring(rec.SessionId))
     return true
@@ -380,6 +435,9 @@ function Service.RequestEntry(gm, crate, controller)
     if key < 0 then return false, 'PLAYER_UNAVAILABLE' end
     local ok, reason, pawn = validatePlayer(key)
     if not ok then return false, reason end
+    if not (valid(pawn.CharacterMovement) and pawn.CharacterMovement:IsMovingOnGround()) then
+        return false, 'PLAYER_AIRBORNE'
+    end
     local Capture = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureService')
     if Capture.IsBusy(gm, key) then return false, 'PLAYER_BUSY' end
     local now = clock(gm)

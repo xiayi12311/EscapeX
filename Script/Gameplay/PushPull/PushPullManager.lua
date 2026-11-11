@@ -210,9 +210,18 @@ local function clearance(crate, u, faceIndex, standOff, participants, minSpacing
     return true
 end
 
+-- Local axes: Front +X, Right +Y, Back -X, Left -Y.
+function M.FacePermissions(actor)
+    return {[0] = actor.CrateFaceFrontEnabled ~= false,
+        [1] = actor.CrateFaceRightEnabled ~= false,
+        [2] = actor.CrateFaceBackEnabled ~= false,
+        [3] = actor.CrateFaceLeftEnabled ~= false}
+end
+
 function M.ResolveGrip(crate, playerLocation, participants, config)
     local faceIndex, reason = M.ChooseFace(crate, playerLocation, config.SurfaceInteractionBand)
     if not faceIndex then return nil, reason end
+    if crate.FaceEnabled and crate.FaceEnabled[faceIndex] == false then return nil, 'FACE_DISABLED' end
     local distance = M.SurfaceDistance(crate, playerLocation)
     if distance > config.SurfaceInteractionBand then return nil, 'TOO_FAR' end
     local baseU = desiredU(crate, playerLocation, faceIndex)
@@ -274,6 +283,7 @@ function M:RegisterCrate(actor, crateId)
         SessionId = self.nextSession,
         Revision = 0,
         Enabled = true,
+        FaceEnabled = M.FacePermissions(actor),
         X = 0, Y = 0, Z = 0, Yaw = 0,
         HalfExtentX = 60, HalfExtentY = 60, HalfExtentZ = 55,
         EdgeMargin = self.config.Interaction.EdgeMargin,
@@ -305,6 +315,55 @@ function M:SetCrateGeometry(actor, location, yaw, halfExtent)
         rec.HalfExtentZ = halfExtent.Z
     end
     return true
+end
+
+-- Rail endpoints are captured in WORLD space once: moving the crate must not move its rail.
+function M:ConfigureRail(actor, a, b)
+    local rec = self.crates[actor]
+    if not rec then return false, 'CRATE_DESTROYED' end
+    local cfg = self.config.Rail
+    local dx, dy = b.X - a.X, b.Y - a.Y
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length < cfg.MinLength or math.abs(b.Z - a.Z) > cfg.AlignmentTolerance then
+        return false, 'INVALID_RAIL_GEOMETRY'
+    end
+    dx, dy = dx / length, dy / length
+    local progress = (rec.X - a.X) * dx + (rec.Y - a.Y) * dy
+    local cross = (rec.X - a.X) * dy - (rec.Y - a.Y) * dx
+    if progress < -cfg.AlignmentTolerance or progress > length + cfg.AlignmentTolerance
+        or math.abs(cross) > cfg.AlignmentTolerance or math.abs(rec.Z - a.Z) > cfg.AlignmentTolerance then
+        return false, 'CRATE_OFF_RAIL'
+    end
+    rec.Rail = {AX=a.X, AY=a.Y, Z=rec.Z, DX=dx, DY=dy, Length=length,
+        Progress=clamp(progress, 0, length),
+        Endpoint=progress <= cfg.EndpointTolerance and -1
+            or (progress >= length - cfg.EndpointTolerance and 1 or 0)}
+    markDirty(rec)
+    return true
+end
+
+function M:RailTarget(actor, distance)
+    local rec = self.crates[actor]
+    local rail = rec and rec.Rail
+    if not rail then return nil end
+    local sign = rec.MotionDirX * rail.DX + rec.MotionDirY * rail.DY
+    local progress = clamp(rail.Progress + sign * distance, 0, rail.Length)
+    return {X=rail.AX + rail.DX * progress, Y=rail.AY + rail.DY * progress, Z=rail.Z}, progress
+end
+
+function M:CommitRailMovement(actor, actual)
+    local rec = self.crates[actor]
+    local rail = rec and rec.Rail
+    if not rail then return end
+    rail.Progress = clamp((actual.X - rail.AX) * rail.DX + (actual.Y - rail.AY) * rail.DY, 0, rail.Length)
+    local endpoint = rail.Progress <= self.config.Rail.EndpointTolerance and -1
+        or (rail.Progress >= rail.Length - self.config.Rail.EndpointTolerance and 1 or 0)
+    if rail.Endpoint ~= endpoint then rail.Endpoint = endpoint; markDirty(rec) end
+    local direction = rec.MotionDirX * rail.DX + rec.MotionDirY * rail.DY
+    if (endpoint == -1 and direction < 0) or (endpoint == 1 and direction > 0) then
+        rec.MotionSpeed = 0
+        markDirty(rec)
+    end
 end
 
 function M:SetCrateEnabled(actor, enabled)
@@ -475,6 +534,15 @@ end
 
 local function updateMotion(self, rec, dt)
     local dirX, dirY, magnitude = M.CombineForce(rec.Participants, self.config.Movement.OppositionDeadzone)
+    -- CombineForce is in crate-local axes; the fixed rail direction is world-space.
+    if rec.Rail then
+        local wx, wy = localToWorld(dirX, dirY, rec.Yaw)
+        local force = (wx * rec.Rail.DX + wy * rec.Rail.DY) * magnitude
+        magnitude = math.abs(force)
+        if magnitude < self.config.Movement.OppositionDeadzone then magnitude = 0 end
+        local sign = force < 0 and -1 or 1
+        dirX, dirY = rec.Rail.DX * sign, rec.Rail.DY * sign
+    end
     local cfg = self.config.Movement
     local targetSpeed = 0
     if magnitude > 0 then targetSpeed = math.min(cfg.MaxSpeed, cfg.BaseSpeed * magnitude) end
@@ -556,6 +624,8 @@ function M:Snapshot(actor)
         SessionId = rec.SessionId,
         Revision = rec.Revision,
         Enabled = rec.Enabled,
+        FaceEnabled = rec.FaceEnabled,
+        Rail = rec.Rail and {Progress=rec.Rail.Progress, Length=rec.Rail.Length, Endpoint=rec.Rail.Endpoint} or nil,
         MotionSpeed = rec.MotionSpeed,
         MotionDirX = rec.MotionDirX,
         MotionDirY = rec.MotionDirY,

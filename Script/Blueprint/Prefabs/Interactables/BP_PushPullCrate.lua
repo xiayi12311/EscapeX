@@ -1,9 +1,15 @@
 ---@class BP_PushPullCrate_C:AActor
----@field CrateMesh UStaticMeshComponent
+---@field CrateVisualMesh1 UStaticMeshComponent
 ---@field CrateCollision UBoxComponent
 ---@field DefaultSceneRoot USceneComponent
+---@field CrateRailEnabled bool
+---@field CrateRailPath USplineComponent
 ---@field CrateId FString
 ---@field CrateEnabled bool
+---@field CrateFaceFrontEnabled bool
+---@field CrateFaceRightEnabled bool
+---@field CrateFaceBackEnabled bool
+---@field CrateFaceLeftEnabled bool
 ---@field CrateHalfWidth float
 ---@field CrateHalfDepth float
 ---@field CrateHalfHeight float
@@ -40,8 +46,8 @@ local Crate = {CrateState = {
 local function valid(o) return o ~= nil and KismetSystemLibrary.IsValid(o) end
 
 local function fitVisual(self)
-    if not (valid(self.CrateMesh) and valid(self.CrateMesh.StaticMesh)) then
-        ugcprint('[PushPull] BP_PushPullCrate CrateMesh or StaticMesh is missing')
+    if not (valid(self.CrateVisualMesh1) and valid(self.CrateVisualMesh1.StaticMesh)) then
+        ugcprint('[PushPull] BP_PushPullCrate CrateVisualMesh1 or StaticMesh is missing')
         return
     end
     local sx = self.CrateVisualScaleX
@@ -49,7 +55,7 @@ local function fitVisual(self)
     local sz = self.CrateVisualScaleZ
     local originX, originY, originZ = 0, 0, 0
     if self.CrateVisualFitToCollision then
-        local bounds = self.CrateMesh.StaticMesh:GetBounds()
+        local bounds = self.CrateVisualMesh1.StaticMesh:GetBounds()
         sx = self.CrateHalfWidth / bounds.BoxExtent.X
         sy = self.CrateHalfDepth / bounds.BoxExtent.Y
         sz = self.CrateHalfHeight / bounds.BoxExtent.Z
@@ -58,8 +64,8 @@ local function fitVisual(self)
     local multiplier = self.CrateVisualScale or 1
     sx, sy, sz = sx * multiplier, sy * multiplier, sz * multiplier
     local location = {X = -originX * sx, Y = -originY * sy, Z = -originZ * sz}
-    pcall(function() self.CrateMesh:SetRelativeLocation(location, false, {}, true) end)
-    self.CrateMesh:SetWorldScale3D({X = sx, Y = sy, Z = sz})
+    pcall(function() self.CrateVisualMesh1:SetRelativeLocation(location, false, {}, true) end)
+    self.CrateVisualMesh1:SetWorldScale3D({X = sx, Y = sy, Z = sz})
 end
 
 function Crate:GetReplicatedProperties()

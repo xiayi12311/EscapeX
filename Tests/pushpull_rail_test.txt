@@ -1,0 +1,34 @@
+﻿local M=assert(loadfile('Script/Gameplay/PushPull/PushPullManager.lua'))()
+local C=assert(loadfile('Script/Gameplay/PushPull/PushPullConfig.lua'))()
+local function near(a,b) assert(math.abs(a-b)<0.0001,tostring(a)..' != '..tostring(b)) end
+local m=M.New(C,{})
+local actor={}
+local rec=m:RegisterCrate(actor,'rail')
+m:SetCrateGeometry(actor,{X=0,Y=0,Z=55},90)
+assert(m:ConfigureRail(actor,{X=0,Y=0,Z=55},{X=0,Y=100,Z=55}))
+rec.Participants={{Phase='Active',FaceIndex=2,Intent=1,AnimState='Push',_lastIntentAt=0}}
+m:Tick(0,0.1)
+near(rec.MotionDirX,0);near(rec.MotionDirY,1);assert(rec.MotionSpeed>0)
+local t=m:RailTarget(actor,200);near(t.X,0);near(t.Y,100)
+near(rec.Rail.Progress,0) -- planning never commits
+m:CommitRailMovement(actor,t);near(rec.Rail.Progress,100);near(rec.MotionSpeed,0)
+assert(rec.Rail.Endpoint==1 and not rec.Blocked and #rec.Participants==1)
+rec.Participants[1].FaceIndex=0
+m:Tick(0,0.1);assert(rec.MotionSpeed>0);near(rec.MotionDirY,-1)
+t=m:RailTarget(actor,200);near(t.Y,0)
+m:CommitRailMovement(actor,t);near(rec.MotionSpeed,0);assert(rec.Rail.Endpoint==-1)
+-- Perpendicular force cannot move along rail.
+rec.Participants[1].FaceIndex=1
+m:Tick(0,0.1);near(rec.MotionSpeed,0)
+-- Invalid tracks never silently become free movement.
+assert(not m:ConfigureRail(actor,{X=0,Y=0,Z=55},{X=0,Y=0,Z=55}))
+assert(not m:ConfigureRail(actor,{X=0,Y=0,Z=55},{X=100,Y=0,Z=60}))
+assert(not m:ConfigureRail(actor,{X=20,Y=0,Z=55},{X=100,Y=0,Z=55}))
+-- Diagonal, initially inside segment; clamping and partial commit.
+m:SetCrateGeometry(actor,{X=30,Y=40,Z=55},0)
+assert(m:ConfigureRail(actor,{X=0,Y=0,Z=55},{X=60,Y=80,Z=55}))
+near(rec.Rail.Progress,50);rec.MotionDirX=0.6;rec.MotionDirY=0.8
+t=m:RailTarget(actor,100);near(t.X,60);near(t.Y,80)
+m:CommitRailMovement(actor,{X=36,Y=48,Z=55});near(rec.Rail.Progress,60)
+assert(rec.Rail.Endpoint==0)
+print('PASS pushpull rail math: rotated force, perpendicular, endpoints, reversal, diagonal, invalid geometry, commit')

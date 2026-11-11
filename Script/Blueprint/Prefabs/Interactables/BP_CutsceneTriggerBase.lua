@@ -31,6 +31,8 @@ local function NewCutsceneTriggerClass()
         self.CutscenePrepared = false
         self.CutscenePlaybackStarted = false
         self.CutsceneBindingsReady = false
+        self.CutscenePlaybackPending = false
+        self:OnCutsceneReleased()
     end
 
     local function stopCutscene(self)
@@ -131,6 +133,14 @@ local function NewCutsceneTriggerClass()
         end
     end
 
+    -- Extension points: default subclasses still start immediately.
+    function Trigger:BeginCutscenePlayback(startPlayback)
+        startPlayback()
+    end
+
+    function Trigger:OnCutsceneReleased()
+    end
+
     function Trigger:OnCutsceneFinished()
         self.CutscenePlayer = nil
         if valid(self.CutsceneActor) then self.CutsceneActor:K2_DestroyActor() end
@@ -138,6 +148,8 @@ local function NewCutsceneTriggerClass()
         self.CutscenePrepared = false
         self.CutscenePlaybackStarted = false
         self.CutsceneBindingsReady = false
+        self.CutscenePlaybackPending = false
+        self:OnCutsceneReleased()
     end
 
     function Trigger:ReceiveBeginPlay()
@@ -233,7 +245,7 @@ local function NewCutsceneTriggerClass()
             end
         end
 
-        if self.CutscenePlaybackStarted then releaseCutscene(self) end
+        if self.CutscenePlaybackStarted or self.CutscenePlaybackPending then releaseCutscene(self) end
 
         local sequencePath = self.CutsceneSequencePath
         if type(sequencePath) ~= 'string' or sequencePath == '' then
@@ -263,18 +275,27 @@ local function NewCutsceneTriggerClass()
             end
         end
 
-        self.CutscenePlayer.OnFinished:Add(self.OnCutsceneFinished, self)
-        self.CutscenePlayer:Play()
-        self.CutscenePlaybackStarted = true
+        local player = self.CutscenePlayer
+        local generation = self.CutscenePrepareGeneration
+        player.OnFinished:Add(self.OnCutsceneFinished, self)
+        self.CutscenePlaybackPending = true
+        self:BeginCutscenePlayback(function()
+            if not valid(self) or self.CutscenePlayer ~= player
+                or self.CutscenePrepareGeneration ~= generation
+                or not self.CutscenePlaybackPending or not valid(player) then return end
+            self.CutscenePlaybackPending = false
+            self.CutscenePlaybackStarted = true
+            player:Play()
 
-        if type(self.EffectSoundPath) == 'string' and self.EffectSoundPath ~= '' then
-            local sound = UE.LoadObject(self.EffectSoundPath)
-            if not valid(sound) then
-                ugcprint('[CutsceneTrigger] audio asset not found: '..tostring(self.EffectSoundPath))
-            else
-                UGCSoundManagerSystem.PlaySoundAttachActor(sound, self, true)
+            if type(self.EffectSoundPath) == 'string' and self.EffectSoundPath ~= '' then
+                local sound = UE.LoadObject(self.EffectSoundPath)
+                if not valid(sound) then
+                    ugcprint('[CutsceneTrigger] audio asset not found: '..tostring(self.EffectSoundPath))
+                else
+                    UGCSoundManagerSystem.PlaySoundAttachActor(sound, self, true)
+                end
             end
-        end
+        end)
     end
 
     function Trigger:StopCutscene()

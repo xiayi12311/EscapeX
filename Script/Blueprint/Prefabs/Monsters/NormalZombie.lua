@@ -72,6 +72,8 @@ function NormalZombie:BPDie(KillingDamage, EventInstigator, DamageCauser, Damage
     if self:HasAuthority() then
         -- 只有服务端才可以掉落
         self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
+        local DefenseEngine = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseEngineAdapter')
+        DefenseEngine.NotifyDeath(self)
     end
 end
 

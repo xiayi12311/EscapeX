@@ -14,6 +14,9 @@ local PushPullConfig=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPull
 local PushPullService=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullService')
 local PushPullFocus=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullFocusPresentation')
 local PushPullPresentation=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullPresentation')
+local ZombieStartFocus=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseStartFocus')
+local ZombieStart=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseStartInteraction')
+local ZombieWaveHUD=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWaveHUD')
 local PlayerController={}
 
 -- The controller is the stable local-session owner: pawns are replaced on respawn, so the
@@ -23,6 +26,8 @@ function PlayerController:ReceiveBeginPlay()
     PlayerController.SuperClass.ReceiveBeginPlay(self)
     Focus.Monitor()
     PushPullFocus.Monitor()
+    ZombieStartFocus.Begin(self)
+    ZombieWaveHUD.Begin(self)
     PushPullPresentation.Monitor()
     FirstPerson.MonitorLocal(self)
     StartSequence.PlayLocal(self)
@@ -31,6 +36,8 @@ end
 function PlayerController:ReceiveEndPlay(reason)
     PushPullPresentation.StopMonitor()
     PushPullFocus.StopMonitor()
+    ZombieStartFocus.End(self)
+    ZombieWaveHUD.End(self)
     FirstPerson.StopLocal(self)
     StartSequence.StopLocal(self)
     PlayerController.SuperClass.ReceiveEndPlay(self,reason)
@@ -43,7 +50,7 @@ function PlayerController:GetAvailableServerRPCs()
     return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle',
         'ServerRPC_StartSequenceFreeze', 'ServerRPC_StartSequenceRestore',
         'ServerRequestPushPull', 'ServerSetPushPullIntent', 'ServerReleasePushPull',
-        'ClientPushPullRejected'
+        'ClientPushPullRejected', 'ServerRequestZombieStart', 'ClientZombieStartResult'
 end
 
 function PlayerController:ServerRequestStruggle(post, sessionId)
@@ -147,6 +154,18 @@ function PlayerController:ServerReleasePushPull(crate, sessionId, sequence)
     end
 end
 
+
+function PlayerController:ServerRequestZombieStart(point, sequence)
+    if not self:HasAuthority() or not validSequence(sequence)
+        or sequence <= (self.ZombieStartSequence or 0) then return end
+    self.ZombieStartSequence = sequence
+    local ok, reason = ZombieStart.Request(self, point)
+    UnrealNetwork.CallUnrealRPC(self, self, 'ClientZombieStartResult', sequence, ok, ZombieStart.ErrorText(reason))
+end
+
+function PlayerController:ClientZombieStartResult(sequence, ok, reason)
+    ZombieStartFocus.Result(sequence, ok, reason)
+end
 
 function PlayerController:UGC_PlayerLostConnectionEvent()
     PlayerController.SuperClass.UGC_PlayerLostConnectionEvent(self)

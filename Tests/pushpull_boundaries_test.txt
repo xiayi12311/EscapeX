@@ -1,0 +1,110 @@
+-- Run from project root using Lua 5.1. Engine boundaries are stubbed explicitly.
+local Manager = assert(loadfile('Script/Gameplay/PushPull/PushPullManager.lua'))()
+local Config = assert(loadfile('Script/Gameplay/PushPull/PushPullConfig.lua'))()
+local points = {[0]={X=135,Y=0,Z=55},[1]={X=0,Y=135,Z=55},
+    [2]={X=-135,Y=0,Z=55},[3]={X=0,Y=-135,Z=55}}
+local names = {[0]='CrateFaceFrontEnabled',[1]='CrateFaceRightEnabled',
+    [2]='CrateFaceBackEnabled',[3]='CrateFaceLeftEnabled'}
+for disabled=0,3 do
+    local actor = {[names[disabled]]=false}
+    local crate = {X=0,Y=0,Z=55,Yaw=0,HalfExtentX=90,HalfExtentY=90,HalfExtentZ=55,
+        EdgeMargin=28,MinGripSpacing=70,FaceEnabled=Manager.FacePermissions(actor)}
+    for face=0,3 do
+        local grip, reason = Manager.ResolveGrip(crate,points[face],{},Config.Interaction)
+        if face==disabled then assert(not grip and reason=='FACE_DISABLED')
+        else assert(grip and grip.FaceIndex==face) end
+    end
+    crate.Yaw=90
+    for face=0,3 do
+        local v=points[face]
+        local grip,reason=Manager.ResolveGrip(crate,{X=-v.Y,Y=v.X,Z=v.Z},{},Config.Interaction)
+        if face==disabled then assert(not grip and reason=='FACE_DISABLED')
+        else assert(grip and grip.FaceIndex==face) end
+    end
+end
+local pawn={CharacterMovement={IsMovingOnGround=function() return false end}}
+KismetSystemLibrary={IsValid=function(v) return v~=nil end}
+UGCPlayerStateSystem={IsAlive=function() return true end,IsExit=function() return false end}
+UGCGameSystem={GetPlayerKeyByPlayerController=function() return 1 end,
+    GetPlayerPawnByPlayerKey=function() return pawn end,
+    GetTimeSeconds=function() return 1 end,
+    UGCRequire=function(path)
+        if path:find('PushPullManager') then return Manager end
+        if path:find('PushPullConfig') then return Config end
+        if path:find('CaptureService') then return {IsBusy=function() return true end} end
+        error(path)
+    end}
+local Service=assert(loadfile('Script/Gameplay/PushPull/PushPullService.lua'))()
+local ok,reason=Service.RequestEntry({PushPullManager={}},{},{})
+assert(not ok and reason=='PLAYER_AIRBORNE')
+pawn.CharacterMovement.IsMovingOnGround=function() return true end
+ok,reason=Service.RequestEntry({PushPullManager={}},{},{})
+assert(not ok and reason=='PLAYER_BUSY') -- grounded passes airborne gate
+-- Exercise the REAL private movement adapter, not a copied implementation.
+local apply
+local function find(fn, depth)
+    if depth>4 then return end
+    for i=1,100 do
+        local name,value=debug.getupvalue(fn,i)
+        if not name then break end
+        if name=='applyMovement' then apply=value; return end
+        if type(value)=='function' and name=='update' then find(value,depth+1) end
+    end
+end
+find(Service.Setup,0)
+assert(apply,'movement adapter must be reachable from service timer owner')
+local blocked=false
+local moves=0
+EDrawDebugTrace={None=0}
+ugcprint=function() end
+local rec={MotionSpeed=100,MotionDirX=1,MotionDirY=0,Participants={},CrateId='test'}
+local position={X=0,Y=0,Z=55}
+local crate={CrateCollision={
+    K2_GetComponentLocation=function() return position end,
+    K2_GetComponentRotation=function() return {Yaw=0} end,
+    GetScaledBoxExtent=function() return {X=90,Y=90,Z=55} end,
+    GetCollisionProfileName=function() return 'BlockAll' end},
+    K2_GetActorLocation=function() return position end,
+    K2_SetActorLocation=function(_,target,sweep,hit,teleport)
+        assert(sweep and not teleport); moves=moves+1; position=target; return true
+    end}
+local manager={FindCrate=function() return rec end,
+    MarkBlocked=function() blocked=true end,ClearBlocked=function() blocked=false end}
+KismetSystemLibrary.BoxTraceSingleByProfile=function(_,start,finish,extent,rotation,profile,complex,ignored)
+    assert(finish.X-start.X==100 and extent.X==90 and ignored[1]==crate)
+    assert(profile=='BlockAll'); return true
+end
+assert(apply(manager,crate,1) and blocked and moves==0 and position.X==0)
+KismetSystemLibrary.BoxTraceSingleByProfile=function() return false end
+assert(not apply(manager,crate,1) and not blocked and moves==1 and position.X==100)
+crate.K2_SetActorLocation=function(_,target) position={X=target.X-1,Y=target.Y,Z=target.Z}; return true end
+assert(apply(manager,crate,1) and blocked and position.X==199)
+print('pushpull_boundaries_test: PASS (32 face/rotation cases, airborne authority, blocked/clear/partial movement)')
+
+-- Real rail movement adapter: endpoint clamp, obstruction without phantom progress,
+-- clear return trip, partial movement commits only actual position.
+local railManager=Manager.New(Config,{})
+position={X=0,Y=0,Z=55}
+local rr=railManager:RegisterCrate(crate,'rail-adapter')
+railManager:SetCrateGeometry(crate,position,0)
+assert(railManager:ConfigureRail(crate,position,{X=50,Y=0,Z=55}))
+rr.MotionSpeed=100;rr.MotionDirX=1;rr.MotionDirY=0
+KismetSystemLibrary.BoxTraceSingleByProfile=function(_,start,finish)
+    assert(finish.X==50);return true
+end
+assert(apply(railManager,crate,1))
+assert(rr.Rail.Progress==0 and position.X==0 and rr.Blocked)
+rr.MotionSpeed=100
+crate.K2_SetActorLocation=function(_,target) position=target;return true end
+KismetSystemLibrary.BoxTraceSingleByProfile=function() return false end
+assert(not apply(railManager,crate,1))
+assert(position.X==50 and rr.Rail.Progress==50 and rr.MotionSpeed==0 and not rr.Blocked)
+assert(rr.Rail.Endpoint==1)
+rr.MotionSpeed=100;rr.MotionDirX=-1
+assert(not apply(railManager,crate,1))
+assert(position.X==0 and rr.Rail.Progress==0 and rr.MotionSpeed==0)
+rr.MotionSpeed=25;rr.MotionDirX=1
+crate.K2_SetActorLocation=function(_,target) position={X=target.X-1,Y=target.Y,Z=target.Z};return true end
+assert(apply(railManager,crate,1))
+assert(position.X==24 and rr.Rail.Progress==24 and rr.Blocked)
+print('PASS rail movement adapter: blocked/endpoint/reverse/partial actual progress')

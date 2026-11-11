@@ -68,6 +68,7 @@ local function crateRecord(actor)
         HalfExtentX = extent.X, HalfExtentY = extent.Y, HalfExtentZ = extent.Z,
         EdgeMargin = Config.Interaction.EdgeMargin,
         MinGripSpacing = Config.Interaction.MinGripSpacing,
+        FaceEnabled = actor.CrateState.FaceEnabled,
     }
 end
 
@@ -77,6 +78,9 @@ end
 
 local function predictedGrip(c, actor, state)
     if not (valid(c.pawn) and valid(actor.CrateCollision)) then return nil end
+    if not (valid(c.pawn.CharacterMovement) and c.pawn.CharacterMovement:IsMovingOnGround()) then
+        return nil, 'PLAYER_AIRBORNE'
+    end
     local rec = crateRecord(actor)
     local location = c.pawn:K2_GetActorLocation()
     local forward = c.pawn:GetActorForwardVector()
@@ -146,6 +150,7 @@ local function prepareWidget(c)
                     UnrealNetwork.CallUnrealRPC(c2.controller, c2.controller, 'ServerReleasePushPull',
                         actor, state.SessionId, seq)
                 else
+                    if not canInteract(c2, actor, actor.CrateState) then return end
                     c2.pending = {actor = actor, sequence = seq}
                     UnrealNetwork.CallUnrealRPC(c2.controller, c2.controller, 'ServerRequestPushPull',
                         actor, seq)

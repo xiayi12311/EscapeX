@@ -1,7 +1,9 @@
 ---@class BP_TeacherShowTrigger_C:BP_CutsceneTriggerBase_C
 ---@field TeacherActorTag FString
 ---@field CameraActorTag FString
----@field FreezePlayersDuringShow bool
+---@field ShowCameraBlendTime float
+---@field ShowCameraEntryLocation FVector
+---@field ShowCameraEntryRotation FRotator
 --Edit Below--
 local Base = require('Script.Blueprint.Prefabs.Interactables.BP_CutsceneTriggerBase')
 local TeacherShowTrigger = Base.NewClass()
@@ -111,6 +113,52 @@ function TeacherShowTrigger:ConfigureCutsceneBindings(sequenceActor, player)
     sequenceActor:UGCAddBinding(teacher, 'SK_NewWorld_TianTan_NPC_F')
     sequenceActor:UGCAddBinding(camera, 'TeacherCamera')
     return true
+end
+
+-- Runs only on the receiving client, before Camera Cuts can take ownership.
+function TeacherShowTrigger:BeginCutscenePlayback(startPlayback)
+    local pc = UGCGameSystem.GetLocalPlayerController()
+    local camera = findActorByTag(self, self.CameraActorTag)
+    local duration = tonumber(self.ShowCameraBlendTime)
+    if not valid(pc) or not valid(camera) or not duration or duration < 0 then
+        ugcprint('[TeacherShowTrigger] invalid camera transition configuration')
+        self:StopCutscene()
+        return
+    end
+    self.ShowCameraController = pc
+    self.ShowOriginalViewTarget = pc:GetViewTarget()
+    camera:K2_SetActorLocationAndRotation(
+        self.ShowCameraEntryLocation, self.ShowCameraEntryRotation, false, {}, true)
+    -- VTBlend_Cubic = 1; lock the outgoing POV while approaching the first frame.
+    pc:SetViewTargetWithBlend(camera, duration, 1, 2.0, true)
+    if duration == 0 then
+        startPlayback()
+        return
+    end
+    local generation = self.CutscenePrepareGeneration
+    self.ShowCameraBlendTimer, self.ShowCameraBlendDelegate = UGCGameSystem.SetTimer(self, function()
+        if not valid(self) or self.CutscenePrepareGeneration ~= generation then return end
+        self.ShowCameraBlendTimer = nil
+        self.ShowCameraBlendDelegate = nil
+        ugcprint('[TeacherShowTrigger] entry blend complete; starting sequence')
+        startPlayback()
+    end, duration, false)
+    ugcprint('[TeacherShowTrigger] blending player camera for '..tostring(duration)..' seconds')
+end
+
+function TeacherShowTrigger:OnCutsceneReleased()
+    if self.ShowCameraBlendTimer then
+        UGCGameSystem.ClearTimer(self, self.ShowCameraBlendTimer)
+    end
+    self.ShowCameraBlendTimer = nil
+    self.ShowCameraBlendDelegate = nil
+    local pc, original = self.ShowCameraController, self.ShowOriginalViewTarget
+    self.ShowCameraController = nil
+    self.ShowOriginalViewTarget = nil
+    -- Sequence restores its pre-Play target (the cinematic camera); restore gameplay after it.
+    if valid(pc) and valid(original) then
+        pc:SetViewTargetWithBlend(original, 0, 1, 2.0, false)
+    end
 end
 
 local baseTryTriggerEffect = TeacherShowTrigger.TryTriggerEffect

@@ -22,6 +22,7 @@ function UGCGameMode:ReceiveBeginPlay()
 end
 
 function UGCGameMode:ReceiveEndPlay(Reason)
+    self:ShutdownZombieDefense()
     PushPull.Shutdown(self)
     FirstPerson.Shutdown()
     Capture.Shutdown(self)
@@ -74,6 +75,35 @@ end
 function UGCGameMode:UGC_PlayerRespawnEvent(RespawnedController)
     TestRevive.onRespawn(self, RespawnedController)
     if self:HasAuthority() then FirstPerson.Schedule(RespawnedController) end
+end
+
+-- Explicit server entry only. Never started by BeginPlay; caller owns team rules.
+function UGCGameMode:StartZombieDefense(EncounterId, InstanceId, PlayerCount)
+    assert(self:HasAuthority(), 'DEFENSE_SERVER_ONLY')
+    if not self.ZombieDefenseService then
+        local Service = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseService')
+        local Catalog = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseCatalog')
+        local service, reason = Service.New(self, Catalog)
+        if not service then return false, reason end
+        self.ZombieDefenseService = service
+    end
+    return self.ZombieDefenseService:Start(EncounterId, InstanceId, PlayerCount,
+        UGCGameSystem.GetServerTimeSec())
+end
+
+function UGCGameMode:StepZombieDefense(EncounterId, TeamFailed)
+    assert(self:HasAuthority(), 'DEFENSE_SERVER_ONLY')
+    if not self.ZombieDefenseService then return nil, 'DEFENSE_NOT_INITIALIZED' end
+    return self.ZombieDefenseService:Step(EncounterId, UGCGameSystem.GetServerTimeSec(), TeamFailed)
+end
+
+function UGCGameMode:ShutdownZombieDefense()
+    local Driver = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
+    Driver.Stop(self)
+    if self.ZombieDefenseService then
+        self.ZombieDefenseService:Shutdown()
+        self.ZombieDefenseService = nil
+    end
 end
 
 return UGCGameMode
