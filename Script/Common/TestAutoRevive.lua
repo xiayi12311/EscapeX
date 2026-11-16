@@ -58,6 +58,15 @@ function M.timerName(key)
     return "TestAutoRevive_" .. tostring(key)
 end
 
+function M.cancel(key)
+    UGCTimerUtility.RemoveLuaTimerByName(M.timerName(key))
+end
+
+local function blocked(gm,key)
+    local Team=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')
+    return Team.BlocksAutoRevive(gm,key)
+end
+
 ---服务器 BeginPlay 调用一次：把默认复活方式设为原地复活。
 function M.setup(gm)
     if not gm:HasAuthority() then return false end
@@ -84,6 +93,7 @@ function M.onKilled(gm, killer, victimController, victimPawn, damageType)
         M.log("Killed event without a resolvable PlayerKey, nothing scheduled")
         return
     end
+    if blocked(gm,key) then M.cancel(key); return end
     local name = M.timerName(key)
     if UGCTimerUtility.IsLuaTimerExistByName(name) then
         M.log("PlayerKey=" .. key .. " revive already queued, ignored the repeat kill")
@@ -96,6 +106,8 @@ function M.onKilled(gm, killer, victimController, victimPawn, damageType)
     M.log(string.format(
         "PlayerKey=%d died at %s, reviving in place after %.2fs", key, M.describe(death), delay))
     UGCTimerUtility.CreateLuaTimer(delay, function()
+        if not KismetSystemLibrary.IsValid(gm) or not gm:HasAuthority()
+            or not M.config(gm,'TestAutoReviveEnabled') or blocked(gm,key) then return end
         -- IsDestoryAlivePawn=false：只复活已死亡的角色，不动存活的 Pawn。
         -- DestroyDelayTime 取默认 0.01，文档说明该项不能为 0。
         UGCPlayerPawnSystem.RespawnPlayer(key, 0, false, 0.01)

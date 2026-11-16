@@ -11,6 +11,11 @@ end
 function BP_ASBoxTrigger:ReceiveBeginPlay()
     BP_ASBoxTrigger.SuperClass.ReceiveBeginPlay(self)
     self.ASHasTriggered = false
+    -- Copied components inherit stale collision flags from the source box; the
+    -- trigger only works with overlap events enabled on an overlap-friendly profile.
+    -- Profile first, then the flag, so the profile write cannot clear it.
+    self:SetCollisionProfileName('Trigger')
+    self.bGenerateOverlapEvents = true
     local owner = self:GetOwner()
     if not valid(owner) then return end
     local sequence = owner[self.SequenceComponentName]

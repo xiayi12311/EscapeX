@@ -132,7 +132,7 @@ function Session:ReportSpawnFailure(instanceId, waveIndex, token, reason)
 end
 
 -- Submit the authoritative team state before checking the same frame's final kill.
-function Session:ResolveFrame(now, deaths, teamFailed)
+function Session:ResolveFrame(now, deaths, teamFailed, deferVictory)
     self:_time(now)
     assert(type(deaths) == 'table', 'INVALID_DEATHS')
     assert(type(teamFailed) == 'boolean', 'INVALID_TEAM_STATE')
@@ -158,6 +158,7 @@ function Session:ResolveFrame(now, deaths, teamFailed)
     if not self.Error and self.Generated == self.Total and self.PendingCount == 0
         and self.AliveCount == 0 then
         if self.WaveIndex == #self.Config.Waves then
+            if deferVictory then return accepted end
             self.State = 'Succeeded'
             self.EndedAt = now
         else

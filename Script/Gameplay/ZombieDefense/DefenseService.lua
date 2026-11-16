@@ -75,7 +75,7 @@ end
 
 -- Caller must provide trusted server time AND the complete authoritative team result.
 -- BPDie only queues events; victory is evaluated here, never inside the callback.
-function Service:Step(encounterId, now, teamFailed)
+function Service:Step(encounterId, now, teamFailed, deferVictory)
     self:_check()
     assert(type(teamFailed) == 'boolean', 'INVALID_TEAM_STATE')
     local run = self.Runs[encounterId]
@@ -92,7 +92,7 @@ function Service:Step(encounterId, now, teamFailed)
             return self:Snapshot(encounterId), run.Error
         end
     end
-    local accepted = session:ResolveFrame(now, run.Deaths, teamFailed)
+    local accepted = session:ResolveFrame(now, run.Deaths, teamFailed, deferVictory)
     run.Deaths = {}
     for _, enemyId in ipairs(accepted) do
         Engine.Release(run.Actors[enemyId])

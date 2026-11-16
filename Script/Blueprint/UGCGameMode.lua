@@ -64,6 +64,8 @@ end
 
 ---玩家被淘汰事件，基类实现为空，生效范围：服务器
 function UGCGameMode:UGC_PlayerKilledEvent(Killer, VictimPlayer, VictimPawn, DamageType)
+    local Driver = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
+    Driver.OnKilled(self,TestRevive.playerKey(VictimPlayer,VictimPawn))
     -- Record the death position before the capture cleanup can move the pawn.
     TestRevive.onKilled(self, Killer, VictimPlayer, VictimPawn, DamageType)
     -- An eliminated player must not keep holding a prison post or block their carrier.
@@ -73,6 +75,10 @@ end
 
 ---玩家复活事件，基类实现为空，生效范围：服务器
 function UGCGameMode:UGC_PlayerRespawnEvent(RespawnedController)
+    if self:HasAuthority() then
+        local Team=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')
+        Team.OnRespawn(self,TestRevive.playerKey(RespawnedController,nil))
+    end
     TestRevive.onRespawn(self, RespawnedController)
     if self:HasAuthority() then FirstPerson.Schedule(RespawnedController) end
 end
@@ -91,15 +97,22 @@ function UGCGameMode:StartZombieDefense(EncounterId, InstanceId, PlayerCount)
         UGCGameSystem.GetServerTimeSec())
 end
 
-function UGCGameMode:StepZombieDefense(EncounterId, TeamFailed)
+function UGCGameMode:StepZombieDefense(EncounterId, TeamFailed, DeferVictory)
     assert(self:HasAuthority(), 'DEFENSE_SERVER_ONLY')
     if not self.ZombieDefenseService then return nil, 'DEFENSE_NOT_INITIALIZED' end
-    return self.ZombieDefenseService:Step(EncounterId, UGCGameSystem.GetServerTimeSec(), TeamFailed)
+    return self.ZombieDefenseService:Step(EncounterId, UGCGameSystem.GetServerTimeSec(), TeamFailed, DeferVictory)
+end
+
+function UGCGameMode:RequestZombieDefenseRevive(EncounterId,PlayerKey)
+    local Team=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')
+    return Team.RequestRevive(self,EncounterId,PlayerKey)
 end
 
 function UGCGameMode:ShutdownZombieDefense()
     local Driver = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
     Driver.Stop(self)
+    local Team=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')
+    Team.Shutdown(self)
     if self.ZombieDefenseService then
         self.ZombieDefenseService:Shutdown()
         self.ZombieDefenseService = nil
