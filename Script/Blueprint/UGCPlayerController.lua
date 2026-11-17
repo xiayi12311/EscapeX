@@ -16,6 +16,8 @@ local PushPullFocus=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullF
 local PushPullPresentation=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullPresentation')
 local ZombieStartFocus=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseStartFocus')
 local ZombieStart=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseStartInteraction')
+local ZombieBoard=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBoardInteraction')
+local ZombieBoardFocus=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBoardFocus')
 local ZombieWaveHUD=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWaveHUD')
 local PlayerController={}
 
@@ -27,6 +29,7 @@ function PlayerController:ReceiveBeginPlay()
     Focus.Monitor()
     PushPullFocus.Monitor()
     ZombieStartFocus.Begin(self)
+    ZombieBoardFocus.Begin(self)
     ZombieWaveHUD.Begin(self)
     PushPullPresentation.Monitor()
     FirstPerson.MonitorLocal(self)
@@ -37,6 +40,7 @@ function PlayerController:ReceiveEndPlay(reason)
     PushPullPresentation.StopMonitor()
     PushPullFocus.StopMonitor()
     ZombieStartFocus.End(self)
+    ZombieBoardFocus.End(self)
     ZombieWaveHUD.End(self)
     FirstPerson.StopLocal(self)
     StartSequence.StopLocal(self)
@@ -50,7 +54,8 @@ function PlayerController:GetAvailableServerRPCs()
     return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle',
         'ServerRPC_StartSequenceFreeze', 'ServerRPC_StartSequenceRestore',
         'ServerRequestPushPull', 'ServerSetPushPullIntent', 'ServerReleasePushPull',
-        'ClientPushPullRejected', 'ServerRequestZombieStart', 'ClientZombieStartResult'
+        'ClientPushPullRejected', 'ServerRequestZombieStart', 'ClientZombieStartResult',
+        'ServerRequestZombieBoard', 'ServerCancelZombieBoard', 'ClientZombieBoardResult'
 end
 
 function PlayerController:ServerRequestStruggle(post, sessionId)
@@ -167,12 +172,71 @@ function PlayerController:ClientZombieStartResult(sequence, ok, reason)
     ZombieStartFocus.Result(sequence, ok, reason)
 end
 
+function PlayerController:ServerRequestZombieBoard(point, sequence)
+    if not self:HasAuthority() or not validSequence(sequence)
+        or sequence <= (self.ZombieBoardSequence or 0) then return end
+    self.ZombieBoardSequence = sequence
+    local ok, reason = ZombieBoard.RequestInstall(self, point)
+    UnrealNetwork.CallUnrealRPC(self, self, 'ClientZombieBoardResult', sequence, ok,
+        ok and nil or ZombieBoard.ErrorText(reason))
+end
+
+function PlayerController:ServerCancelZombieBoard(sequence)
+    if not self:HasAuthority() or not validSequence(sequence)
+        or sequence <= (self.ZombieBoardCancelSequence or 0) then return end
+    self.ZombieBoardCancelSequence = sequence
+    local ok, reason = ZombieBoard.CancelInstall(self)
+    if not ok then
+        UnrealNetwork.CallUnrealRPC(self, self, 'ClientZombieBoardResult', sequence, false,
+            ZombieBoard.ErrorText(reason))
+    end
+end
+
+function PlayerController:ClientZombieBoardResult(sequence, ok, reason)
+    ZombieBoardFocus.Result(sequence, ok, reason)
+end
+
+-- A silent disconnect keeps the controller alive and never raises the game mode's
+-- PlayerExitEvent, so the encounter roster would keep counting that player as present
+-- forever: a wiped online team would not fail, and the wave timer would never pause on
+-- an empty map. This event is the authoritative disconnect signal for that case; the
+-- key is still readable here because the controller is not destroyed.
 function PlayerController:UGC_PlayerLostConnectionEvent()
     PlayerController.SuperClass.UGC_PlayerLostConnectionEvent(self)
     if self:HasAuthority() then
-        DeskSearch.CancelPlayer(UGCGameSystem.GetGameMode(),self,'DISCONNECTED')
-        Capture.CancelPlayer(UGCGameSystem.GetGameMode(),self,'PLAYER_UNAVAILABLE')
-        PushPullService.CancelPlayer(UGCGameSystem.GetGameMode(),self,'PLAYER_UNAVAILABLE')
+        local gm = UGCGameSystem.GetGameMode()
+        DeskSearch.CancelPlayer(gm,self,'DISCONNECTED')
+        Capture.CancelPlayer(gm,self,'PLAYER_UNAVAILABLE')
+        PushPullService.CancelPlayer(gm,self,'PLAYER_UNAVAILABLE')
+        local key = UGCGameSystem.GetPlayerKeyByPlayerController(self)
+        if type(key) == 'number' and key >= 0 then
+            -- Same release as the exit event: a disconnected player cannot finish a
+            -- board, and the window must not stay busy until they come back.
+            UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBoardInteraction')
+                .ReleasePlayer(gm, key)
+            UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
+                .OnExit(gm, key)
+        end
+    end
+end
+
+-- Reconnect counterpart: the roster marks the player online again (or joins them to a
+-- running encounter if they were never in it) and the pause lifts.
+function PlayerController:UGC_PlayerReconnectedEvent(IsRecovered)
+    if type(PlayerController.SuperClass.UGC_PlayerReconnectedEvent) == 'function' then
+        PlayerController.SuperClass.UGC_PlayerReconnectedEvent(self, IsRecovered)
+    end
+    if self:HasAuthority() then
+        local key = UGCGameSystem.GetPlayerKeyByPlayerController(self)
+        if type(key) == 'number' and key >= 0 then
+            -- No alive evidence here in either reconnect flavour: a silent reconnect
+            -- keeps the pawn (the authoritative probe still works), and a kill-process
+            -- reconnect has no rebuilt pawn yet, so the probe honestly excludes an
+            -- unknown player until a respawn/login re-runs this. Claiming "alive" would
+            -- add a still-dead player to the roster and stop the team from failing.
+            UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
+                .OnLogin(UGCGameSystem.GetGameMode(), key)
+        end
     end
 end
 
