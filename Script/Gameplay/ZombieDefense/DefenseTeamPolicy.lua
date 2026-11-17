@@ -29,6 +29,12 @@ function M.BlocksAutoRevive(gm,key)
     for _, keys in pairs(owners[gm] or {}) do if keys[key] then return true end end
     return false
 end
+function M.CanShop(gm, encounter, key)
+    server(gm)
+    local roster = owners[gm] and owners[gm][encounter]
+    local member = key and roster and roster[key]
+    return member ~= nil and not member.Dead and UGCPlayerStateSystem.IsAlive(key)
+end
 function M.TeamFailed(gm,encounter)
     server(gm)
     local keys = assert(owners[gm] and owners[gm][encounter], 'DEFENSE_ROSTER_MISSING')

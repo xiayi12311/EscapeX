@@ -17,6 +17,8 @@ local PushPullPresentation=UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.Pu
 local ZombieStartFocus=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseStartFocus')
 local ZombieStart=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseStartInteraction')
 local ZombieWaveHUD=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWaveHUD')
+local Shop = UGCGameSystem.UGCRequire('Script.utils.HospitalShopService')
+local ShopPresentation = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseShopPresentation')
 local PlayerController={}
 
 -- The controller is the stable local-session owner: pawns are replaced on respawn, so the
@@ -37,6 +39,7 @@ function PlayerController:ReceiveEndPlay(reason)
     PushPullPresentation.StopMonitor()
     PushPullFocus.StopMonitor()
     ZombieStartFocus.End(self)
+    ShopPresentation.Close(self)
     ZombieWaveHUD.End(self)
     FirstPerson.StopLocal(self)
     StartSequence.StopLocal(self)
@@ -50,7 +53,44 @@ function PlayerController:GetAvailableServerRPCs()
     return 'ServerRequestDeskSearch', 'ServerCancelDeskSearch', 'ServerRequestStruggle',
         'ServerRPC_StartSequenceFreeze', 'ServerRPC_StartSequenceRestore',
         'ServerRequestPushPull', 'ServerSetPushPullIntent', 'ServerReleasePushPull',
-        'ClientPushPullRejected', 'ServerRequestZombieStart', 'ClientZombieStartResult'
+        'ClientPushPullRejected', 'ServerRequestZombieStart', 'ClientZombieStartResult',
+        'ServerOpenDefenseShop', 'ClientOpenDefenseShop', 'ClientDefenseShopDenied', 'RPC_Server_RequestHospitalShopState',
+        'RPC_Server_BuyCommodity', 'RPC_Server_RefreshHospitalShop', 'RPC_Server_LockHospitalShop',
+        'RPC_Client_HospitalShopState'
+end
+
+function PlayerController:ServerOpenDefenseShop(point)
+    if self:HasAuthority() then Shop.Open(self, point) end
+end
+
+function PlayerController:ClientOpenDefenseShop()
+    if self == UGCGameSystem.GetLocalPlayerController() then ShopPresentation.Open(self) end
+end
+
+function PlayerController:ClientDefenseShopDenied(point)
+    if self == UGCGameSystem.GetLocalPlayerController() then ZombieStartFocus.ShopDenied(point) end
+end
+
+function PlayerController:RPC_Server_RequestHospitalShopState()
+    if self:HasAuthority() then Shop.SendState(self) end
+end
+
+function PlayerController:RPC_Server_BuyCommodity(id, request, round, wave, version)
+    if self:HasAuthority() then Shop.Buy(self, id, request, round, wave, version) end
+end
+
+function PlayerController:RPC_Server_RefreshHospitalShop(request, round, wave, version)
+    if self:HasAuthority() then Shop.Refresh(self, request, round, wave, version) end
+end
+
+function PlayerController:RPC_Server_LockHospitalShop(id, request, round, wave, version)
+    if self:HasAuthority() then Shop.Lock(self, id, request, round, wave, version) end
+end
+
+function PlayerController:RPC_Client_HospitalShopState(state)
+    if self == UGCGameSystem.GetLocalPlayerController() then
+        ShopPresentation.Receive(self, state)
+    end
 end
 
 function PlayerController:ServerRequestStruggle(post, sessionId)

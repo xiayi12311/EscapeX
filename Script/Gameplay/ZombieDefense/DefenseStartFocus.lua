@@ -1,9 +1,11 @@
 -- Reuses the crate's shared widget shell; no changes to crate grip or hold logic.
 local UI = UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullConfig').Interaction
+local Catalog = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseCatalog')
 local Start = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseStartInteraction')
 local World = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWorldPoints')
 local M = {}
 local current
+local ShopView = UGCGameSystem.UGCRequire("Script.Gameplay.ZombieDefense.DefenseShopPresentation")
 local function valid(o) return o ~= nil and KismetSystemLibrary.IsValid(o) end
 local function clear(c)
     if valid(c.target) then UGCGameSystem.DrawOutline(c.target, false, UI.OutlineThickness, UI.OutlineColor) end
@@ -30,11 +32,40 @@ local function target(c, pawn)
         end
     end
 end
+-- Shop points are scene-component markers, so a collision trace cannot select them.
+local function nearbyShop(c, pawn)
+    local origin = pawn:K2_GetActorLocation()
+    local best, bestDistance
+    for _, point in pairs(c.shops or {}) do
+        if valid(point) and point.Enabled and valid(point.InteractionPoint) then
+            local config = Catalog.Shops[point.ShopConfigId]
+            if config then
+                local at = point.InteractionPoint:K2_GetComponentLocation()
+                local distance = (origin.X-at.X)^2 + (origin.Y-at.Y)^2 + (origin.Z-at.Z)^2
+                if distance <= config.Range^2 and (not bestDistance or distance < bestDistance)
+                    and c.widget:SetWorldAnchor(c.pc, at) then
+                    best, bestDistance = point, distance
+                end
+            end
+        end
+    end
+    return best
+end
+
 function M.Update()
     local c = current
     if not c or not valid(c.widget) then return end
+    if ShopView.IsOpen() then
+        c.widget:SetVisibility(ESlateVisibility.Collapsed)
+        return
+    end
     local pawn = UGCGameSystem.GetLocalPlayerPawn()
-    local point = valid(pawn) and target(c,pawn) or nil
+    local point, shop
+    if valid(pawn) then
+        point = target(c, pawn)
+        if not point then point = nearbyShop(c, pawn); shop = point ~= nil end
+    end
+    c.shop = shop
     if point ~= c.target then
         c.error = nil
         clear(c); c.target = point
@@ -45,7 +76,7 @@ function M.Update()
     c.widget:SetButtonVisible(show)
     local projected = false
     if show then
-        local label = point.DefenseStarted and Start.Config.StartedLabel
+        local label = shop and (c.error or '商店') or point.DefenseStarted and Start.Config.StartedLabel
             or (c.pending and Start.Config.PendingLabel or (c.error and ('启动失败: '..c.error) or Start.Config.Label))
         c.widget.WBP_Interact_Left:Configure(c.widget,label)
         projected = c.widget:SetWorldAnchor(c.pc,point.InteractionPoint:K2_GetComponentLocation())
@@ -59,12 +90,20 @@ function M.Result(sequence, ok, reason)
     c.error = not ok and tostring(reason) or nil
     if not ok then ugcprint('[ZombieStart] request rejected: '..tostring(reason)) end
 end
+function M.ShopDenied(point)
+    if current and current.shop and current.target == point then
+        local config = Catalog.Shops[point.ShopConfigId]
+        current.error = config and not config.StandaloneLevel and '请先启动守点' or '暂不可用'
+    end
+end
+
 function M.Begin(pc)
     if pc ~= UGCGameSystem.GetLocalPlayerController() then return false end
     if current then M.End() end
     local class = UE.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(World.Classes.Start))
     if not class then ugcprint('[ZombieStart] start class unavailable');return false end
-    local c = {pc=pc,class=class,sequence=0}
+    local shopClass = UE.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(World.Classes.Shop))
+    local c = {pc=pc,class=class,shopClass=shopClass}
     current = c
     UGCWidgetUtility.CreateWidgetAsync(UI.WidgetClassPath,function(widget)
         if current ~= c then
@@ -78,11 +117,24 @@ function M.Begin(pc)
         widget:AddToViewport(20)
         widget:SetRequestHandler(function()
             local point = c.target
-            if current ~= c or c.pending or not valid(point) or point.DefenseStarted then return end
+            if current ~= c or ShopView.IsOpen() or not valid(point) then return end
+            if c.shop then
+                c.error = nil
+                UnrealNetwork.CallUnrealRPC(pc,pc,'ServerOpenDefenseShop',point)
+                return
+            end
+            if c.pending or point.DefenseStarted then return end
             pc.ZombieStartClientSequence = (pc.ZombieStartClientSequence or 0)+1
             c.pending=pc.ZombieStartClientSequence
             UnrealNetwork.CallUnrealRPC(pc,pc,'ServerRequestZombieStart',point,c.pending)
         end,function()end)
+        if c.shopClass then
+            local function refreshShops()
+                c.shops = UGCActorComponentUtility.GetAllActorsOfClass(pc, c.shopClass)
+            end
+            refreshShops()
+            c.shopTimer = UGCTimerUtility.CreateLuaTimer(1, refreshShops, true)
+        end
         c.timer = UGCTimerUtility.CreateLuaTimer(UI.DetectInterval,M.Update,true)
     end)
     return true
@@ -92,6 +144,7 @@ function M.End(pc)
     if not c or (pc and pc ~= c.pc) then return end
     current = nil
     clear(c)
+    if c.shopTimer then UGCTimerUtility.RemoveLuaTimer(c.shopTimer) end
     if c.timer then UGCTimerUtility.RemoveLuaTimer(c.timer) end
     if valid(c.widget) then UGCWidgetUtility.DestroyWidget(c.widget) end
 end
