@@ -31,7 +31,27 @@ function UGCGameMode:ReceiveEndPlay(Reason)
 end
 
 function UGCGameMode:UGC_PlayerLoginEvent(PlayerController)
-    if self:HasAuthority() then FirstPerson.Schedule(PlayerController) end
+    if self:HasAuthority() then
+        FirstPerson.Schedule(PlayerController)
+        local key = UGCGameSystem.GetPlayerKeyByPlayerController(PlayerController)
+        if type(key) == 'number' and key >= 0 then
+            UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver').OnLogin(self, key)
+        end
+    end
+end
+
+-- PlayerExitEvent fires before the controller and state are destroyed, so the key
+-- is still readable. A disconnect neither auto-revives the player nor holds the
+-- team open; the roster entry is kept for reconnect.
+function UGCGameMode:UGC_PlayerExitEvent(PlayerController)
+    if not self:HasAuthority() then return end
+    local key = UGCGameSystem.GetPlayerKeyByPlayerController(PlayerController)
+    if type(key) ~= 'number' or key < 0 then return end
+    -- A player who leaves cannot finish a board; release it before the roster
+    -- records the disconnect so the window does not stay busy forever.
+    UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBoardInteraction')
+        .ReleasePlayer(self, key)
+    UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver').OnExit(self, key)
 end
 
 function UGCGameMode:GetOpenedCount()
@@ -64,8 +84,18 @@ end
 
 ---玩家被淘汰事件，基类实现为空，生效范围：服务器
 function UGCGameMode:UGC_PlayerKilledEvent(Killer, VictimPlayer, VictimPawn, DamageType)
-    local Driver = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
-    Driver.OnKilled(self,TestRevive.playerKey(VictimPlayer,VictimPawn))
+    -- The base event is server-only; the guard keeps a stray client-side dispatch from
+    -- tripping the roster's server assert. Marking the roster must happen before the
+    -- test revive schedules anything, or the death would slip past the encounter policy.
+    if self:HasAuthority() then
+        local Driver = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
+        local victimKey = TestRevive.playerKey(VictimPlayer,VictimPawn)
+        Driver.OnKilled(self,victimKey)
+        -- A dead installer must not finish a board on the next tick from wherever
+        -- the corpse ends up; releasing here is the authoritative interruption.
+        UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBoardInteraction')
+            .ReleasePlayer(self, victimKey)
+    end
     -- Record the death position before the capture cleanup can move the pawn.
     TestRevive.onKilled(self, Killer, VictimPlayer, VictimPawn, DamageType)
     -- An eliminated player must not keep holding a prison post or block their carrier.
@@ -75,12 +105,24 @@ end
 
 ---玩家复活事件，基类实现为空，生效范围：服务器
 function UGCGameMode:UGC_PlayerRespawnEvent(RespawnedController)
+    local key = TestRevive.playerKey(RespawnedController,nil)
     if self:HasAuthority() then
         local Team=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')
-        Team.OnRespawn(self,TestRevive.playerKey(RespawnedController,nil))
+        Team.OnRespawn(self,key)
     end
     TestRevive.onRespawn(self, RespawnedController)
-    if self:HasAuthority() then FirstPerson.Schedule(RespawnedController) end
+    if self:HasAuthority() then
+        FirstPerson.Schedule(RespawnedController)
+        -- A player who died before joining (and was already respawned by another
+        -- path) would otherwise stay outside the roster forever: the join check at
+        -- login requires IsAlive. Re-run the idempotent join on respawn so such a
+        -- player either returns to their existing entry or joins an active one.
+        -- knownAlive=true: this event itself proves the player is alive, and the pawn
+        -- may not be rebuilt yet at this point.
+        if type(key) == 'number' and key >= 0 then
+            UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver').OnLogin(self, key, true)
+        end
+    end
 end
 
 -- Explicit server entry only. Never started by BeginPlay; caller owns team rules.

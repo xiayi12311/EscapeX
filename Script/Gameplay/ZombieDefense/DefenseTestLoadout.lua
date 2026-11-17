@@ -2,7 +2,7 @@
 local M = {}
 M.Config = {
     Enabled = true,
-    MapName = 'ZombieTestMap',
+    Maps = {ZombieTestMap = true, UGCmap = true},
     DelaySeconds = 2,
     Items = {{ItemId = 101004, Count = 1}, {ItemId = 303001, Count = 180}},
 }
@@ -10,7 +10,7 @@ local pending = setmetatable({}, {__mode = 'k'})
 local attempted = setmetatable({}, {__mode = 'k'})
 local function eligible(pawn)
     return UE.IsValid(pawn) and pawn:HasAuthority() and M.Config.Enabled
-        and UGCGameSystem.GetCurrentLevel(pawn, true) == M.Config.MapName
+        and M.Config.Maps[UGCGameSystem.GetCurrentLevel(pawn, true)] == true
 end
 function M.Schedule(pawn)
     if not eligible(pawn) or pending[pawn] or attempted[pawn] then return false end

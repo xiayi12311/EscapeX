@@ -9,8 +9,27 @@ function M.InRange(point, pawn)
     local a, b = point:K2_GetActorLocation(), pawn:K2_GetActorLocation()
     return (a.X-b.X)^2 + (a.Y-b.Y)^2 + (a.Z-b.Z)^2 <= M.Config.Range^2
 end
+-- Player-facing wording only; the raw code stays in the log for diagnosis. Registry
+-- failures stay structured (Code[PointId.Field]) because they name a configuration
+-- defect the map author must fix, not a player mistake.
+local Message = {
+    DRIVER_DISABLED = '当前地图未开启自动波次',
+    INVALID_PLAYER_COUNT = '参战人数不合法',
+    PARTICIPANT_NOT_ALIVE = '有队友当前不在存活状态',
+    PARTICIPANT_COUNT_CHANGED = '参战人数在启动时发生变化',
+    PARTICIPANT_ALREADY_ASSIGNED = '已有其他防守正在进行',
+    OUT_OF_RANGE = '离启动点太远',
+    ENCOUNTER_ALREADY_STARTED = '本防守已经启动',
+    POINT_DISABLED = '启动点已停用',
+    UNREGISTERED_START_POINT = '启动点未注册或重复',
+    INVALID_START_POINT = '启动点类型不匹配',
+    GAMEMODE_UNAVAILABLE = 'GameMode 不可用',
+    INVALID_START_REQUEST = '启动请求无效',
+}
 function M.ErrorText(reason)
-    if type(reason) ~= 'table' then return tostring(reason) end
+    if type(reason) ~= 'table' then
+        return Message[reason] or tostring(reason)
+    end
     local parts = {}
     for _, issue in ipairs(reason) do
         parts[#parts+1] = tostring(issue.Code) .. '[' .. tostring(issue.PointId)
