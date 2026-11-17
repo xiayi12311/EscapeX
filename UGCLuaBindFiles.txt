@@ -29,6 +29,7 @@ Script/Blueprint/Prefabs/Projectiles/ZombieBossProj.lua
 Script/Blueprint/Prefabs/Skills/Blueprint/Prefabs/Skills/HTDetectSkill.lua
 Script/Blueprint/Prefabs/Skills/testskill.lua
 Script/Blueprint/Prefabs/Skills/ZombieBossSkill_1.lua
+Script/Blueprint/Prefabs/Skills/ZS_WindowVault.lua
 Script/Blueprint/Prefabs/Triggers/BP_AirWall.lua
 Script/Blueprint/Prefabs/Triggers/BP_DeskCountTeacherSpawner.lua
 Script/Blueprint/Prefabs/Triggers/BP_RedLightCheckpoint.lua
@@ -66,6 +67,9 @@ Script/Gameplay/PushPull/PushPullManager.lua
 Script/Gameplay/PushPull/PushPullPresentation.lua
 Script/Gameplay/PushPull/PushPullService.lua
 Script/Gameplay/StartSequence.lua
+Script/Gameplay/ZombieDefense/DefenseBarricade.lua
+Script/Gameplay/ZombieDefense/DefenseBoardFocus.lua
+Script/Gameplay/ZombieDefense/DefenseBoardInteraction.lua
 Script/Gameplay/ZombieDefense/DefenseCatalog.lua
 Script/Gameplay/ZombieDefense/DefenseConfig.lua
 Script/Gameplay/ZombieDefense/DefenseEngineAdapter.lua
@@ -80,6 +84,7 @@ Script/Gameplay/ZombieDefense/DefenseTestDriver.lua
 Script/Gameplay/ZombieDefense/DefenseTestLoadout.lua
 Script/Gameplay/ZombieDefense/DefenseWaveHUD.lua
 Script/Gameplay/ZombieDefense/DefenseWorldPoints.lua
+Script/Gameplay/ZombieDefense/DefenseZombieAssault.lua
 Script/MIG/Blueprint/AI_PatientMonster/WBP_Interact_patient.lua
 Script/MIG/UI/Hospital/WBP_Interact.lua
 Script/Sequences/BP_ASBoxTrigger.lua
