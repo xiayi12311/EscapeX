@@ -112,8 +112,7 @@ function M.Begin(pc)
     if not class then ugcprint('[ZombieBoard] window class unavailable'); return false end
     local c = {pc=pc, class=class, key=UGCGameSystem.GetPlayerKeyByPlayerController(pc)}
     current = c
-    UGCWidgetUtility.CreateWidgetAsync(
-        UGCGameSystem.GetUGCResourcesFullPath(UI.WidgetClassPath), function(widget)
+    UGCWidgetUtility.CreateWidgetAsync(UI.WidgetClassPath, function(widget)
         if current ~= c then
             if valid(widget) then UGCWidgetUtility.DestroyWidget(widget) end
             return

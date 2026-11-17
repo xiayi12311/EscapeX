@@ -1,9 +1,20 @@
--- Engine boundary only; no target-selection, timers, or team-rule defaults.
+-- Engine boundary for combat, navigation and world contact.
 local Adapter = {}
 local bindings = setmetatable({}, {__mode = 'k'})
 
-local vaultPauseReason = "ZombieDefenseVault"
+local behaviorPauseReason = "ZombieDefenseNavigation"
 local vaultInterruptReason = 1 -- EPESkillDeActivateReason.Interrupt
+local pathSuccess = 3 -- ENavigationQueryResult.Success
+
+local function setBehaviorPaused(actor, binding, paused)
+    if (binding.BehaviorPaused == true) == paused then return end
+    binding.BehaviorPaused = paused
+    if paused then
+        UGCGenericCharacterSystem.PauseBehavior(actor, behaviorPauseReason)
+    else
+        UGCGenericCharacterSystem.ResumeBehavior(actor, behaviorPauseReason)
+    end
+end
 
 function Adapter.PrepareVaults(windows, configs)
     local result = {}
@@ -60,23 +71,31 @@ function Adapter.StopVault(actor, landed)
         cast.Skill:DeActivateSkill(landed and 0 or vaultInterruptReason)
     end
     UGCPersistEffectSystem.RemoveSkillInstance(actor, cast.Skill)
-    if UGCGenericCharacterSystem.IsAlive(actor) then
-        UGCGenericCharacterSystem.ResumeBehavior(actor, vaultPauseReason)
+    binding.RepathAt = nil
+    if not binding.Targeting and UGCGenericCharacterSystem.IsAlive(actor) then
+        setBehaviorPaused(actor, binding, false)
     end
 end
 
 function Adapter.StartVault(actor, plan)
     if not Adapter.VaultReady(actor, plan) then return false, "VAULT_NOT_READY" end
+    local controller = actor:GetController()
+    if not KismetSystemLibrary.IsValid(controller) then return false, "VAULT_CONTROLLER_UNAVAILABLE" end
     local skill = UGCPersistEffectSystem.AddSkillByClass(actor, plan.Class, -1, plan.Slot)
     if not skill then return false, "VAULT_SKILL_GRANT_FAILED" end
     if not skill:CanActivateSkill() then
         UGCPersistEffectSystem.RemoveSkillInstance(actor, skill)
         return false, "VAULT_SKILL_BLOCKED"
     end
-    UGCGenericCharacterSystem.PauseBehavior(actor, vaultPauseReason)
+    setBehaviorPaused(actor, bindings[actor], true)
     UGCGenericCharacterSystem.StopMove(actor)
+    controller:StopMovement()
+    controller:K2_ClearFocus()
+    actor.CharacterMovement:StopMovementImmediately()
     bindings[actor].Vault = {Skill = skill}
-    if actor:K2_SetActorRotation({Pitch=0, Yaw=plan.Yaw, Roll=0}, false) then
+    local facing = {Pitch=0, Yaw=plan.Yaw, Roll=0}
+    controller:SetControlRotation(facing)
+    if actor:K2_SetActorRotation(facing, false) then
         skill:ActivateSkill()
         if skill:IsActivating() then return true end
     end
@@ -173,7 +192,17 @@ function Adapter.NotifyDeath(actor)
 end
 
 function Adapter.Release(actor)
+    local binding = bindings[actor]
+    if not binding then return end
     Adapter.StopVault(actor, false)
+    if (binding.Player or binding.BehaviorPaused) and KismetSystemLibrary.IsValid(actor)
+        and UGCGenericCharacterSystem.IsAlive(actor) then
+        if binding.Player then actor:RemoveForceHatredTarget() end
+        if binding.BehaviorPaused then
+            UGCGenericCharacterSystem.StopMove(actor)
+            setBehaviorPaused(actor, binding, false)
+        end
+    end
     bindings[actor] = nil
 end
 
@@ -207,8 +236,128 @@ local function clearBoardContact(enemy, window, from, to)
         enemy, from, to, obstructionTypes, false, {enemy, window}, 0, {}, true,
         {R=1,G=0,B=0,A=1}, {R=0,G=1,B=0,A=1}, 0)
 end
+
+local function windowGeometry(actor, pointId)
+    local outside = actor.OutsideApproach:K2_GetComponentLocation()
+    local inside = actor.InsideLanding:K2_GetComponentLocation()
+    local board = actor.BoardRoot:K2_GetComponentLocation()
+    local dx, dy = outside.X - inside.X, outside.Y - inside.Y
+    local function exterior(location)
+        return (location.X - board.X)*dx + (location.Y - board.Y)*dy > 0
+    end
+    local insideSide = (inside.X - board.X)*dx + (inside.Y - board.Y)*dy
+    if not exterior(outside) or insideSide >= 0 then
+        return nil, "INVALID_WINDOW_APPROACH: " .. pointId
+    end
+    return {Outside = outside, Board = board, Exterior = exterior}
+end
+
+function Adapter.PrepareTargeting(windows, config)
+    if type(config) ~= 'table' or type(config.RepathSeconds) ~= 'number'
+        or not (config.RepathSeconds > 0 and config.RepathSeconds < math.huge)
+        or type(config.WindowStopRadius) ~= 'number'
+        or not (config.WindowStopRadius > 0 and config.WindowStopRadius < math.huge) then
+        return nil, 'INVALID_TARGETING_CONFIG'
+    end
+    local class = UE.LoadClass('/Script/Engine.NavigationSystem')
+    local navigation = class and UGCObjectUtility.GetClassDefaultObject(class)
+    if not navigation or not navigation.GetPathLength then
+        return nil, 'ZOMBIE_NAV_QUERY_UNAVAILABLE'
+    end
+    local entries = {}
+    for _, actor in ipairs(windows) do
+        local geometry, reason = windowGeometry(actor, actor.PointId)
+        if not geometry then return nil, reason end
+        entries[#entries + 1] = {PointId = actor.PointId, Window = geometry, Actor = actor}
+    end
+    return {PathLength = navigation.GetPathLength, Windows = entries, RepathSeconds = config.RepathSeconds,
+        WindowStopRadius = config.WindowStopRadius}
+end
+
+local function livingPlayers()
+    local players, keys = {}, {}
+    for _, controller in pairs(UGCGameSystem.GetAllPlayerController(false)) do
+        if KismetSystemLibrary.IsValid(controller) then
+            local key = UGCGameSystem.GetPlayerKeyByPlayerController(controller)
+            if type(key) == 'number' and key >= 0 and UGCPlayerStateSystem.IsAlive(key) then
+                local pawn = UGCGameSystem.GetPlayerPawnByPlayerKey(key)
+                if KismetSystemLibrary.IsValid(pawn) then
+                    players[key] = pawn
+                    keys[#keys + 1] = key
+                end
+            end
+        end
+    end
+    table.sort(keys)
+    return players, keys
+end
+
+local function applyTarget(actor, binding, target, controller, stopRadius)
+    local player = target and target.Player
+    local pointId = target and target.PointId
+    local changed = not binding.Targeting or binding.Player ~= player or binding.PointId ~= pointId
+    binding.Targeting = true
+    if changed then
+        UGCGenericCharacterSystem.StopMove(actor)
+        if binding.Player and not player then actor:RemoveForceHatredTarget() end
+        if player then actor:SetForceHatredTarget(player) end
+        binding.Player, binding.PlayerKey, binding.PointId = player, target and target.PlayerKey, pointId
+        setBehaviorPaused(actor, binding, player == nil)
+    end
+    -- Idle requests can be retried when navigation or crowd movement clears.
+    if pointId and (changed or controller:GetMoveStatus() == 0) then
+        controller:MoveToLocation(target.Destination, stopRadius, false, true, false, false,
+            controller.DefaultNavigationFilterClass, false, false)
+    end
+end
+
+function Adapter.UpdateTargeting(plan, actors, dying, now)
+    local players, keys = livingPlayers()
+    for enemyId, actor in pairs(actors) do
+        local binding = bindings[actor]
+        if binding and not binding.Vault and not dying[enemyId]
+            and KismetSystemLibrary.IsValid(actor) and UGCGenericCharacterSystem.IsAlive(actor)
+            and (not binding.RepathAt or now >= binding.RepathAt
+                or (binding.Player and players[binding.PlayerKey] ~= binding.Player)) then
+            local controller = actor:GetController()
+            if KismetSystemLibrary.IsValid(controller) then
+                local from = actor:GetNavAgentLocation()
+                local filter = controller.DefaultNavigationFilterClass
+                local target, shortest, previous = nil, math.huge, false
+                local function consider(to, player, key, pointId)
+                    local result, length = plan.PathLength(controller, from, to, -1, nil, filter)
+                    -- Recast can fill the length for a partial route while returning Fail.
+                    if result ~= pathSuccess then return end
+                    if type(length) ~= 'number' or not (length >= 0 and length < math.huge) then
+                        return 'ZOMBIE_NAV_LENGTH_UNAVAILABLE'
+                    end
+                    local current = player and binding.Player == player or pointId and binding.PointId == pointId
+                    if length < shortest or (length == shortest and current and not previous) then
+                        shortest, previous = length, current
+                        target = {Player = player, PlayerKey = key, PointId = pointId, Destination = to}
+                    end
+                end
+                for _, key in ipairs(keys) do
+                    local player = players[key]
+                    local err = consider(player:GetNavAgentLocation(), player, key)
+                    if err then return false, err end
+                end
+                for _, entry in ipairs(plan.Windows) do
+                    if entry.Actor.Enabled and entry.Window.Exterior(from) then
+                        local err = consider(entry.Window.Outside, nil, nil, entry.PointId)
+                        if err then return false, err end
+                    end
+                end
+                applyTarget(actor, binding, target, controller, plan.WindowStopRadius)
+                binding.RepathAt = now + plan.RepathSeconds
+            end
+        end
+    end
+    return true
+end
+
 -- Use the window anchors to distinguish exterior attackers from indoor enemies.
-function Adapter.CollectBoardContacts(barricade, actors, assault, dying)
+function Adapter.CollectBoardContacts(barricade, actors, assault, dying, targeted)
     assert(type(barricade) == 'table', 'MISSING_BARRICADE')
     assert(type(actors) == 'table', 'MISSING_ACTORS')
     assert(type(assault) == 'table', 'MISSING_ASSAULT')
@@ -217,27 +366,22 @@ function Adapter.CollectBoardContacts(barricade, actors, assault, dying)
     for _, window in ipairs(barricade.List) do
         local range = assault:Range(window.PointId)
         local actor = window.Actor
-        local outside = actor.OutsideApproach:K2_GetComponentLocation()
-        local inside = actor.InsideLanding:K2_GetComponentLocation()
-        local board = actor.BoardRoot:K2_GetComponentLocation()
-        local dx, dy = outside.X - inside.X, outside.Y - inside.Y
-        local function side(location)
-            return (location.X - board.X)*dx + (location.Y - board.Y)*dy
-        end
-        if side(outside) <= 0 or side(inside) >= 0 then
-            return nil, "INVALID_WINDOW_APPROACH: " .. window.PointId
-        end
+        local geometry, reason = windowGeometry(actor, window.PointId)
+        if not geometry then return nil, reason end
+        local outside = geometry.Outside
         local found = {}
         for enemyId, actor in pairs(actors) do
             -- A zombie already queued as dead this frame is a corpse even if
             -- the engine still reports it alive, so it gets no last hit.
-            if not skip[enemyId] and KismetSystemLibrary.IsValid(actor)
+            local binding = bindings[actor]
+            if not skip[enemyId] and (not targeted or binding and not binding.Vault
+                and binding.PointId == window.PointId) and KismetSystemLibrary.IsValid(actor)
                 and UGCGenericCharacterSystem.IsAlive(actor) then
                 local at = actor:K2_GetActorLocation()
-                if at and side(at) > 0
+                if at and geometry.Exterior(at)
                     and (outside.X-at.X)^2 + (outside.Y-at.Y)^2
                         + (outside.Z-at.Z)^2 <= range^2
-                    and clearBoardContact(actor, window.Actor, at, board) then
+                    and clearBoardContact(actor, window.Actor, at, geometry.Board) then
                     found[#found + 1] = enemyId
                 end
             end

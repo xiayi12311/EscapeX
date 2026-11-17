@@ -1,5 +1,15 @@
 -- Prototype content IDs used by placed point Actors; no automatic startup.
 local Config = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseConfig')
+local function vaultProfile(skill)
+    return {
+        ClassPath = 'Asset/Blueprint/Prefabs/Skills/' .. skill .. '.' .. skill .. '_C',
+        Slot = 'Skill.Slot.Slot0', Travel = 400,
+        StartRadius = 15, LandingRadius = 35, FootTolerance = 15,
+    }
+end
+local standardVault = vaultProfile('ZS_WindowVault')
+local policeVault = vaultProfile('ZS_PoliceWindowVault')
+local testTargeting = {RepathSeconds = 0.6, WindowStopRadius = 5}
 return {
     Modes = {Prototype = Config},
     SpawnGroups = {Default = {}},
@@ -16,16 +26,23 @@ return {
         BoardsPerWindow = 3, BoardDurability = 120, InstallSeconds = 2,
         InstallRange = 180, ClimbCapacity = 1, AssaultConfigId = 'Default',
     }},
+    BoardPresentation = {
+        ClassPath = 'Asset/Blueprint/ZombieSurvival/Points/BP_ZS_BoardVisual.BP_ZS_BoardVisual_C',
+        SlotSpacing = 32,
+    },
     -- Zombie side of the same window: one shared profile, referenced by id so it
     -- can be tuned per window type without touching the board rules.
     Assaults = {Default = {
         DamagePerSecond = 25, AttackRange = 200, ClimbSeconds = 2.5, MaxAttackers = 2,
     }},
-    -- The 400 cm collision-tested skill is enabled only at the verified west window.
-    Vaults = {ZombieTest = {WindowNW = {
-        ClassPath = "Asset/Blueprint/Prefabs/Skills/ZS_WindowVault.ZS_WindowVault_C",
-        Slot = "Skill.Slot.Slot0", Travel = 400,
-        StartRadius = 15, LandingRadius = 35, FootTolerance = 15,
-    }}},
+    Targeting = {ZombieTest = testTargeting, DefenseMainTest = testTargeting},
+    Vaults = {
+        ZombieTest = {WindowNW = standardVault, WindowNE = standardVault},
+        DefenseMainTest = {
+            DefenseWindow01 = policeVault,
+            DefenseWindow02 = policeVault,
+            DefenseWindow03 = policeVault,
+        },
+    },
     Shops = {},
 }

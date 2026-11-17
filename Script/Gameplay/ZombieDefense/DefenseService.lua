@@ -6,6 +6,13 @@ Service.__index = Service
 local active = setmetatable({}, {__mode = 'k'})
 local encounterOwners = setmetatable({}, {__mode = 'k'})
 
+local function publishBoardSlots(window, slots)
+    local actor = window.Actor
+    if KismetSystemLibrary.IsValid(actor) and actor.DefenseBoardSlots ~= slots then
+        actor:SetDefenseBoardSlots(slots)
+    end
+end
+
 -- One explicit lifecycle per context/encounter; no automatic BeginPlay or timer.
 function Service.New(context, catalog)
     Engine.ValidateContext(context)
@@ -44,10 +51,23 @@ function Service:Start(encounterId, instanceId, playerCount, now)
     local windows = self.Registry:GetPoints(encounterId, "Window")
     local vaults, vaultError = Engine.PrepareVaults(windows, self.Catalog.Vaults and self.Catalog.Vaults[encounterId])
     if not vaults then return false, vaultError end
+    local targeting
+    local targetConfig = self.Catalog.Targeting and self.Catalog.Targeting[encounterId]
+    if targetConfig then
+        local targetError
+        targeting, targetError = Engine.PrepareTargeting(windows, targetConfig)
+        if not targeting then return false, targetError end
+        for _, window in ipairs(windows) do
+            if not vaults[window.PointId] then return false, 'MISSING_WINDOW_VAULT: ' .. window.PointId end
+            if targeting.WindowStopRadius > vaults[window.PointId].StartRadius then
+                return false, 'WINDOW_STOP_OUTSIDE_VAULT_RADIUS: ' .. window.PointId
+            end
+        end
+    end
     session:Start(now)
     self.Runs[encounterId] = {Session = session, Plans = plans, Deaths = {}, Actors = {},
         Cursor = 0, Error = nil, StartPoint = start, Deferred = {}, RetryAt = 0,
-        Barricade = barricade, Vaults = vaults}
+        Barricade = barricade, Vaults = vaults, Targeting = targeting}
     encounterOwners[start] = self
     self.UsedInstances[instanceId] = true
     return true
@@ -132,19 +152,27 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
             return self:Snapshot(encounterId), run.Error
         end
     end
+    local dying = {}
+    for _, death in ipairs(run.Deaths) do dying[death.EnemyId] = true end
+    local running = not teamFailed and state ~= 'Succeeded' and state ~= 'Failed'
+    if running and run.Targeting and next(run.Actors) then
+        local ok, reason = Engine.UpdateTargeting(run.Targeting, run.Actors, dying, now)
+        if not ok then
+            run.Error = reason
+            return self:Snapshot(encounterId), reason
+        end
+    end
     -- Boards keep progressing independently of the wave clock, but a finished
     -- encounter grants nothing: installers are simply dropped with the run.
-    if run.Barricade and not teamFailed and state ~= 'Succeeded' and state ~= 'Failed' then
+    if run.Barricade and running then
         -- The zombie side reads the same board state: contacts are measured by
         -- the adapter against each window's own attack range, and damage/climb
         -- then go through the barricade object, so there is still exactly one
         -- owner of "how many boards are left". Enemies already queued as dead in
         -- this frame are excluded: their death is consumed below, and a corpse
         -- must not land one last board hit.
-        local dying = {}
-        for _, death in ipairs(run.Deaths) do dying[death.EnemyId] = true end
         local contacts, contactError = Engine.CollectBoardContacts(run.Barricade, run.Actors,
-            run.Barricade.Assault, dying)
+            run.Barricade.Assault, dying, run.Targeting ~= nil)
         if not contacts then
             run.Error = contactError
             return self:Snapshot(encounterId), contactError
@@ -168,6 +196,9 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
                 Engine.StopVault(run.Actors[enemyId], landed)
             end,
         })
+        for _, window in ipairs(run.Barricade.List) do
+            publishBoardSlots(window, table.concat(window.VisualSlots, ','))
+        end
     end
     local accepted = session:ResolveFrame(now, run.Deaths, teamFailed, deferVictory)
     run.Deaths = {}
@@ -275,7 +306,12 @@ function Service:DamageBoard(encounterId, pointId, amount, now)
     if not run.Barricade then return nil, 'NO_WINDOWS_IN_ENCOUNTER' end
     local state = run.Session:Snapshot().State
     if state == 'Succeeded' or state == 'Failed' then return nil, 'ENCOUNTER_ENDED' end
-    return run.Barricade:Damage(pointId, amount, now)
+    local hit, reason = run.Barricade:Damage(pointId, amount, now)
+    if hit and hit.Destroyed > 0 then
+        local window = run.Barricade.ById[pointId]
+        publishBoardSlots(window, table.concat(window.VisualSlots, ','))
+    end
+    return hit, reason
 end
 
 -- Reserved zombie traversal entry; the AI side is not wired yet, so this is the
@@ -320,6 +356,7 @@ function Service:Shutdown()
         if run.Barricade then
             run.Barricade:InterruptAll()
             run.Barricade.Assault:InterruptAll()
+            for _, window in ipairs(run.Barricade.List) do publishBoardSlots(window, '') end
         end
         for _, actor in pairs(run.Actors) do Engine.Release(actor) end
         encounterOwners[run.StartPoint] = nil

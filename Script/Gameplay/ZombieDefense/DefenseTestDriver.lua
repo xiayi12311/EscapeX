@@ -1,10 +1,18 @@
 -- Automatic wave driver; server roster owns player elimination policy.
 local Team = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')
 local M = {}
-M.Config = {Enabled = true, MapName = 'ZombieTestMap', TickSeconds = 0.2}
+M.Config = {
+    Enabled = true,
+    EncountersByMap = {ZombieTestMap = 'ZombieTest', UGCmap = 'DefenseMainTest'},
+    TickSeconds = 0.2,
+}
 local owners = setmetatable({}, {__mode='k'})
 local fail
 local function valid(o) return o and KismetSystemLibrary.IsValid(o) end
+local function enabledFor(gm, encounter)
+    local map = UGCGameSystem.GetCurrentLevel(gm, true)
+    return M.Config.Enabled and M.Config.EncountersByMap[map] == encounter
+end
 function M.Stop(gm)
     local runs = owners[gm]
     if not runs then return end
@@ -32,7 +40,7 @@ function M.Start(gm, point, instanceId, count)
     -- The driver only runs the automatic test flow on the configured test map. Refuse
     -- instead of half-starting: capturing a roster and marking the point started here
     -- would freeze that encounter with no timer, no result, and no way to relaunch it.
-    if not M.Config.Enabled or UGCGameSystem.GetCurrentLevel(gm,true) ~= M.Config.MapName then
+    if not enabledFor(gm, point.EncounterId) then
         return false, 'DRIVER_DISABLED'
     end
     local keys, reason = Team.Capture(gm,count)
@@ -50,7 +58,7 @@ function M.Start(gm, point, instanceId, count)
         -- instead of stepping an encounter whose roster is gone.
         if not owners[gm] or owners[gm][encounter] ~= run then return end
         if not valid(gm) or not gm:HasAuthority() then M.Stop(gm);return end
-        if not M.Config.Enabled or UGCGameSystem.GetCurrentLevel(gm,true) ~= M.Config.MapName then
+        if not enabledFor(gm, encounter) then
             -- Reached only when the setting/map changes mid-run. Stop advancing and say
             -- so; the encounter keeps its roster and can be settled by an explicit
             -- ShutdownZombieDefense. No fake victory/failure is invented here.

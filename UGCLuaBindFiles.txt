@@ -29,6 +29,7 @@ Script/Blueprint/Prefabs/Projectiles/ZombieBossProj.lua
 Script/Blueprint/Prefabs/Skills/Blueprint/Prefabs/Skills/HTDetectSkill.lua
 Script/Blueprint/Prefabs/Skills/testskill.lua
 Script/Blueprint/Prefabs/Skills/ZombieBossSkill_1.lua
+Script/Blueprint/Prefabs/Skills/ZS_PoliceWindowVault.lua
 Script/Blueprint/Prefabs/Skills/ZS_WindowVault.lua
 Script/Blueprint/Prefabs/Triggers/BP_AirWall.lua
 Script/Blueprint/Prefabs/Triggers/BP_DeskCountTeacherSpawner.lua
@@ -38,7 +39,9 @@ Script/Blueprint/UGCGameMode.lua
 Script/Blueprint/UGCGameState.lua
 Script/Blueprint/UGCPlayerController.lua
 Script/Blueprint/UGCPlayerPawn.lua
+Script/Blueprint/ZombieSurvival/Points/BP_ZS_BoardVisual.lua
 Script/Blueprint/ZombieSurvival/Points/BP_ZS_StartPoint.lua
+Script/Blueprint/ZombieSurvival/Points/BP_ZS_WindowPoint.lua
 Script/Common/TestAutoRevive.lua
 Script/Common/ue_enum_custom.lua
 Script/GameAttribute/game_attribute_type.lua
@@ -70,6 +73,7 @@ Script/Gameplay/StartSequence.lua
 Script/Gameplay/ZombieDefense/DefenseBarricade.lua
 Script/Gameplay/ZombieDefense/DefenseBoardFocus.lua
 Script/Gameplay/ZombieDefense/DefenseBoardInteraction.lua
+Script/Gameplay/ZombieDefense/DefenseBoardPresentation.lua
 Script/Gameplay/ZombieDefense/DefenseCatalog.lua
 Script/Gameplay/ZombieDefense/DefenseConfig.lua
 Script/Gameplay/ZombieDefense/DefenseEngineAdapter.lua
@@ -89,6 +93,7 @@ Script/MIG/Blueprint/AI_PatientMonster/WBP_Interact_patient.lua
 Script/MIG/UI/Hospital/WBP_Interact.lua
 Script/Sequences/BP_ASBoxTrigger.lua
 Script/Sequences/Run.lua
+Script/Sequences/Run1.lua
 Script/UI/EnemyArrow/HTArrowConfig.lua
 Script/UI/EnemyArrow/HTArrowState.lua
 Script/UI/EnemyArrow/WBP_HTEnemyArrow.lua

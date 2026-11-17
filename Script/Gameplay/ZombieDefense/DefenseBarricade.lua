@@ -36,7 +36,7 @@ function Barricade.New(windows)
         assert(type(pointId) == 'string' and pointId ~= '', 'INVALID_WINDOW_ID')
         assert(not byId[pointId], 'DUPLICATE_WINDOW_ID: ' .. pointId)
         local window = {PointId = pointId, Actor = entry.Actor,
-            Config = windowConfig(entry.Config), Boards = {}, Installer = nil,
+            Config = windowConfig(entry.Config), Boards = {}, VisualSlots = {}, Installer = nil,
             InstallEndsAt = nil, Climbers = {}}
         byId[pointId] = window
         list[#list + 1] = window
@@ -143,6 +143,14 @@ function Barricade:InterruptAll()
     return interrupted
 end
 
+local function nextVisualSlot(window)
+    local used = {}
+    for _, slot in ipairs(window.VisualSlots) do used[slot] = true end
+    for slot = 1, window.Config.BoardsPerWindow do
+        if not used[slot] then return slot end
+    end
+end
+
 -- Re-checks the installer at completion: distance, liveness and a climb that
 -- started meanwhile all void the unfinished board instead of granting it late.
 function Barricade:Advance(now, isEligible)
@@ -166,7 +174,9 @@ function Barricade:Advance(now, isEligible)
             if reason then
                 event.Kind, event.Reason = 'Interrupted', reason
             else
+                local slot = assert(nextVisualSlot(window), 'NO_FREE_BOARD_VISUAL_SLOT')
                 window.Boards[#window.Boards + 1] = window.Config.BoardDurability
+                window.VisualSlots[#window.VisualSlots + 1] = slot
                 event.Kind, event.Boards = 'Installed', #window.Boards
             end
             events[#events + 1] = event
@@ -221,6 +231,7 @@ function Barricade:Damage(pointId, amount, now)
         window.Boards[1] = remaining
     else
         table.remove(window.Boards, 1)
+        table.remove(window.VisualSlots, 1)
         destroyed = 1
     end
     return {PointId = pointId, Destroyed = destroyed, Boards = #window.Boards,
