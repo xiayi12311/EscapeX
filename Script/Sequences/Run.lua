@@ -1,4 +1,10 @@
 ---@class Run_C:AActor
+---@field Run1SkeletalMesh USkeletalMeshComponent
+---@field Run1Cube2 UStaticMeshComponent
+---@field Run1Cube3 UStaticMeshComponent
+---@field Run1Sequence UActorSequenceComponent
+---@field Run1Sequence2 UActorSequenceComponent
+---@field Run1ASBoxTrigger BP_ASBoxTrigger_C
 ---@field BP_ASBoxTrigger1 BP_ASBoxTrigger_C
 ---@field ActorSequence2 UActorSequenceComponent
 ---@field StaticMesh2 UStaticMeshComponent
