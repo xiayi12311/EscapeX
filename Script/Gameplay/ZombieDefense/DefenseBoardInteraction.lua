@@ -40,7 +40,7 @@ end
 local function service(controller)
     local gm = UGCGameSystem.GetGameMode()
     if not valid(gm) then return nil, 'SERVICE_UNAVAILABLE' end
-    if not gm.ZombieDefenseService then return nil, 'ENCOUNTER_NOT_STARTED' end
+    if not gm.ZombieDefenseService then return nil, 'SERVICE_UNAVAILABLE' end
     return gm.ZombieDefenseService
 end
 
@@ -53,7 +53,7 @@ local function registered(controller, point)
     return true
 end
 
-function M.RequestInstall(controller, point)
+local function installRequest(controller, point, action)
     if not (valid(controller) and controller:HasAuthority() and valid(point)) then
         return false, 'INVALID_BOARD_REQUEST'
     end
@@ -63,8 +63,15 @@ function M.RequestInstall(controller, point)
     if not svc then return false, serviceError end
     local key = UGCGameSystem.GetPlayerKeyByPlayerController(controller)
     if type(key) ~= 'number' or key < 0 then return false, 'INVALID_BOARD_REQUEST' end
-    return svc:InstallBoard(point.EncounterId, point.PointId, key,
-        UGCGameSystem.GetServerTimeSec())
+    return svc[action](svc, point.EncounterId, point.PointId, key, point)
+end
+
+function M.RequestInstall(controller, point)
+    return installRequest(controller, point, 'InstallBoard')
+end
+
+function M.CompleteInstall(controller, point)
+    return installRequest(controller, point, 'CompleteBoard')
 end
 
 function M.CancelInstall(controller)
@@ -75,13 +82,8 @@ function M.CancelInstall(controller)
     if not svc then return false, serviceError end
     local key = UGCGameSystem.GetPlayerKeyByPlayerController(controller)
     if type(key) ~= 'number' or key < 0 then return false, 'INVALID_BOARD_REQUEST' end
-    -- Cancel is encounter-agnostic: one player can only ever install one board,
-    -- so the service is asked across the encounters it owns instead of being
-    -- handed an encounter id the client could spoof.
-    for encounterId in pairs(svc.Runs) do
-        local cancelled, pointId = svc:CancelBoard(encounterId, key)
-        if cancelled then return true, pointId end
-    end
+    local pointId = svc:ReleaseBoardPlayer(key)
+    if pointId then return true, pointId end
     return false, 'NOT_INSTALLING'
 end
 
@@ -90,12 +92,7 @@ end
 function M.ReleasePlayer(gm, playerKey)
     if not valid(gm) or not gm.ZombieDefenseService then return nil end
     if type(playerKey) ~= 'number' or playerKey < 0 then return nil end
-    local svc = gm.ZombieDefenseService
-    for encounterId in pairs(svc.Runs) do
-        local pointId = svc:BoardPlayerLeft(encounterId, playerKey)
-        if pointId then return pointId end
-    end
-    return nil
+    return gm.ZombieDefenseService:ReleaseBoardPlayer(playerKey)
 end
 
 function M.Status(gm, point)

@@ -2,9 +2,10 @@
 --Edit Below--
 UGCGameSystem.UGCRequire('Script.Common.ue_enum_custom')
 local UGCGameState = {}; 
--- function UGCGameState:ReceiveBeginPlay()
-
--- end
+function UGCGameState:ReceiveBeginPlay()
+	self.IsOpenShovelAbility = true
+	self.SuperClass.ReceiveBeginPlay(self)
+end
 -- function UGCGameState:ReceiveTick(DeltaTime)
 
 -- end

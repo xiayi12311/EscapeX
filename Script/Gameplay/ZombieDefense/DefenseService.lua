@@ -13,6 +13,34 @@ local function publishBoardSlots(window, slots)
     end
 end
 
+local function publishBoardInteraction(barricade, enabled)
+    if not barricade then return end
+    for _, window in ipairs(barricade.List) do
+        local actor = window.Actor
+        if KismetSystemLibrary.IsValid(actor) then
+            local installer = enabled and window.Installer or nil
+            local available = enabled and actor.Enabled == true and installer == nil and #window.Climbers == 0
+                and #window.Boards < window.Config.BoardsPerWindow
+            local old = actor.DefenseBoardInteractionState
+            if not old or old.Available ~= available or old.Installer ~= installer then
+                actor.DefenseBoardInteractionState = {Available = available, Installer = installer}
+            end
+        end
+    end
+end
+
+local function stopWindowCombat(run)
+    if not run.Barricade or run.WindowCombatStopped then return end
+    run.WindowCombatStopped = true
+    run.Barricade.Assault:InterruptAll()
+    for _, window in ipairs(run.Barricade.List) do window.Climbers = {} end
+    for _, actor in pairs(run.Actors) do
+        Engine.StopVault(actor, false)
+        Engine.StopBoardAttack(actor, true)
+    end
+    publishBoardInteraction(run.Barricade, true)
+end
+
 -- One explicit lifecycle per context/encounter; no automatic BeginPlay or timer.
 function Service.New(context, catalog)
     Engine.ValidateContext(context)
@@ -21,7 +49,7 @@ function Service.New(context, catalog)
     local registry, errors = WorldPoints.Collect(context, catalog)
     if not registry then return nil, errors end
     local self = setmetatable({Context = context, Catalog = catalog, Registry = registry,
-        Runs = {}, UsedInstances = {}, Closed = false}, Service)
+        Barricades = {}, Runs = {}, UsedInstances = {}, Closed = false}, Service)
     active[context] = self
     return self
 end
@@ -41,21 +69,38 @@ function Service:Start(encounterId, instanceId, playerCount, now)
     if encounterOwners[start] then return false, 'ENCOUNTER_ALREADY_OWNED' end
     local mode = self.Catalog.Modes[start.ModeConfigId]
     if not mode then return false, 'MODE_CONFIG_REMOVED' end
+    if mode.Load then
+        local config, reason = mode.Load()
+        if not config then return false, reason end
+        mode = config
+    end
     -- Session copies and validates all wave/difficulty numbers before any engine spawn.
-    local session = Session.New(mode, instanceId, playerCount)
+    local ok, session = pcall(Session.New, mode, instanceId, playerCount)
+    if not ok then
+        local reason = tostring(session):gsub('^.-:%d+:%s*', '')
+        return false, reason
+    end
     local plans, errorCode = Engine.Prepare(self.Context,
         self.Registry:GetPoints(encounterId, 'Spawn'), self.Catalog)
     if not plans then return false, errorCode end
     local barricade, boardError = self:_barricade(encounterId)
     if boardError then return false, boardError end
+    local assault, assaultError = self:_buildAssault(barricade)
+    if assaultError then return false, assaultError end
+    local boardAttack
+    if barricade then
+        boardAttack, assaultError = Engine.PrepareBoardAttack(self.Catalog.BoardAttackSkill)
+        if not boardAttack then return false, assaultError end
+    end
     local windows = self.Registry:GetPoints(encounterId, "Window")
-    local vaults, vaultError = Engine.PrepareVaults(windows, self.Catalog.Vaults and self.Catalog.Vaults[encounterId])
+    local placement = self.Catalog.Enemies.NormalZombie and self.Catalog.Enemies.NormalZombie.Placement
+    local vaults, vaultError = Engine.PrepareVaults(windows, placement)
     if not vaults then return false, vaultError end
     local targeting
     local targetConfig = self.Catalog.Targeting and self.Catalog.Targeting[encounterId]
     if targetConfig then
         local targetError
-        targeting, targetError = Engine.PrepareTargeting(windows, targetConfig)
+        targeting, targetError = Engine.PrepareTargeting(windows, targetConfig, self.Catalog.WindowQueue)
         if not targeting then return false, targetError end
         for _, window in ipairs(windows) do
             if not vaults[window.PointId] then return false, 'MISSING_WINDOW_VAULT: ' .. window.PointId end
@@ -65,46 +110,76 @@ function Service:Start(encounterId, instanceId, playerCount, now)
         end
     end
     session:Start(now)
+    if barricade then barricade.Assault = assault end
     self.Runs[encounterId] = {Session = session, Plans = plans, Deaths = {}, Actors = {},
         Cursor = 0, Error = nil, StartPoint = start, Deferred = {}, RetryAt = 0,
-        Barricade = barricade, Vaults = vaults, Targeting = targeting}
+        Barricade = barricade, BoardAttack = boardAttack, Vaults = vaults, Targeting = targeting}
+    publishBoardInteraction(barricade, true)
     encounterOwners[start] = self
     self.UsedInstances[instanceId] = true
     return true
 end
 
--- Boards are built from the same validated registry as spawns, so a window that
--- fails config validation stops the start instead of becoming an open hole. The
--- zombie-side assault profile is resolved here too: a window whose assault
--- profile vanished must fail loudly rather than silently become invulnerable.
+-- Installed and pending boards belong to the world, so starting waves reuses them.
 function Service:_barricade(encounterId)
+    if self.Barricades[encounterId] then return self.Barricades[encounterId] end
     local windows = self.Registry:GetPoints(encounterId, 'Window') or {}
     if #windows == 0 then return nil end
     local Barricade = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBarricade')
-    local Assault = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseZombieAssault')
-    local entries, assaultConfigs = {}, {}
+    local entries = {}
     for _, actor in ipairs(windows) do
-        local config = self.Catalog.Barricades[actor.BarricadeConfigId]
-        if type(config) ~= 'table' then
-            return nil, 'BARRICADE_CONFIG_REMOVED: ' .. tostring(actor.BarricadeConfigId)
-        end
-        local assaultConfig
-        if config.AssaultConfigId and type(self.Catalog.Assaults) == 'table' then
-            assaultConfig = self.Catalog.Assaults[config.AssaultConfigId]
-        end
-        if type(assaultConfig) ~= 'table' then
-            return nil, 'ASSAULT_CONFIG_REMOVED: ' .. tostring(config.AssaultConfigId)
-        end
-        entries[#entries + 1] = {PointId = actor.PointId, Actor = actor, Config = config}
-        assaultConfigs[actor.PointId] = assaultConfig
+        entries[#entries + 1] = {PointId = actor.PointId, Actor = actor, Config = {
+            BoardsPerWindow = actor.BoardsPerWindow, BoardDurability = actor.BoardDurability,
+            InstallSeconds = actor.InstallSeconds, InstallRange = actor.InstallRange, ClimbCapacity = 1,
+        }}
     end
     local ok, built = pcall(Barricade.New, entries)
     if not ok then return nil, 'INVALID_BARRICADE_CONFIG' end
-    local assault
-    ok, assault = pcall(Assault.New, assaultConfigs)
-    if not ok then return nil, 'INVALID_ASSAULT_CONFIG' end
-    built.Assault = assault
+    self.Barricades[encounterId] = built
     return built
+end
+
+function Service:_buildAssault(barricade)
+    if not barricade then return nil end
+    local Assault = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseZombieAssault')
+    local config = self.Catalog.BoardAssault
+    if type(config) ~= 'table' then return nil, 'MISSING_BOARD_ASSAULT_CONFIG' end
+    local assaultConfigs = {}
+    for _, window in ipairs(barricade.List) do
+        assaultConfigs[window.PointId] = config
+    end
+    local ok, assault = pcall(Assault.New, assaultConfigs)
+    if not ok then return nil, 'INVALID_ASSAULT_CONFIG' end
+    return assault
+end
+
+function Service:PrepareBoards()
+    self:_check()
+    for encounterId in pairs(self.Registry.Groups) do
+        local _, reason = self:_barricade(encounterId)
+        if reason then return false, reason end
+    end
+    for _, barricade in pairs(self.Barricades) do publishBoardInteraction(barricade, true) end
+    return true
+end
+
+function Service:_validateBoardInstalls(encounterId)
+    local barricade = self.Barricades[encounterId]
+    if not barricade or not next(barricade.Installer) then return end
+    local changed = false
+    for _, window in ipairs(barricade.List) do
+        local key = window.Installer
+        if key and not Engine.InstallEligible(self.Context, key, window.Actor, window.Config.InstallRange) then
+            barricade:ReleasePlayer(key)
+            changed = true
+        end
+    end
+    if changed then publishBoardInteraction(barricade, true) end
+end
+
+function Service:TickBoardInstalls()
+    self:_check()
+    for encounterId in pairs(self.Barricades) do self:_validateBoardInstalls(encounterId) end
 end
 
 function Service:_spawn(run, request)
@@ -140,6 +215,8 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
     assert(type(teamFailed) == 'boolean', 'INVALID_TEAM_STATE')
     local run = self.Runs[encounterId]
     if not run then return nil, 'ENCOUNTER_NOT_STARTED' end
+    self:_validateBoardInstalls(encounterId)
+    run.BoardEvents, run.PendingBoardEvents = run.PendingBoardEvents, nil
     local session = run.Session
     local state = session:Snapshot().State
     if state ~= 'Succeeded' and state ~= 'Failed' then
@@ -149,21 +226,21 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
         end
         -- Adapter faults freeze progression, but never mask authoritative team failure.
         if run.Error and not teamFailed then
+            stopWindowCombat(run)
             return self:Snapshot(encounterId), run.Error
         end
     end
     local dying = {}
     for _, death in ipairs(run.Deaths) do dying[death.EnemyId] = true end
-    local running = not teamFailed and state ~= 'Succeeded' and state ~= 'Failed'
+    local running = not run.WindowCombatStopped and not teamFailed and state ~= 'Succeeded' and state ~= 'Failed'
     if running and run.Targeting and next(run.Actors) then
-        local ok, reason = Engine.UpdateTargeting(run.Targeting, run.Actors, dying, now)
+        local ok, reason = Engine.UpdateTargeting(run.Targeting, run.Actors, dying, now, run.Barricade, run.Vaults)
         if not ok then
             run.Error = reason
+            stopWindowCombat(run)
             return self:Snapshot(encounterId), reason
         end
     end
-    -- Boards keep progressing independently of the wave clock, but a finished
-    -- encounter grants nothing: installers are simply dropped with the run.
     if run.Barricade and running then
         -- The zombie side reads the same board state: contacts are measured by
         -- the adapter against each window's own attack range, and damage/climb
@@ -172,16 +249,16 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
         -- this frame are excluded: their death is consumed below, and a corpse
         -- must not land one last board hit.
         local contacts, contactError = Engine.CollectBoardContacts(run.Barricade, run.Actors,
-            run.Barricade.Assault, dying, run.Targeting ~= nil)
+            run.Barricade.Assault, dying, run.Targeting)
         if not contacts then
             run.Error = contactError
+            stopWindowCombat(run)
             return self:Snapshot(encounterId), contactError
         end
-        run.BoardEvents = run.Barricade:Advance(now, function(key, pointId, actor)
-            return Engine.InstallEligible(self.Context, key, actor,
-                run.Barricade:Range(pointId))
-        end)
         run.AssaultEvents = run.Barricade.Assault:Advance(run.Barricade, contacts, now, {
+            IsAttacking = function(enemyId)
+                return Engine.IsBoardAttackActive(run.Actors[enemyId])
+            end,
             Ready = function(pointId, enemyId)
                 return Engine.VaultReady(run.Actors[enemyId], run.Vaults[pointId])
             end,
@@ -196,6 +273,18 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
                 Engine.StopVault(run.Actors[enemyId], landed)
             end,
         })
+        for _, event in ipairs(run.AssaultEvents) do
+            if event.Kind == 'BoardSwing' then
+                local window = run.Barricade.ById[event.PointId].Actor
+                local ok, reason = Engine.StartBoardAttack(run.Actors[event.EnemyId], window, run.BoardAttack)
+                if not ok then
+                    run.Barricade.Assault:CancelSwing(event.EnemyId)
+                    event.Kind, event.Reason = 'Rejected', reason
+                end
+            elseif event.Kind == 'BoardSwingInterrupted' then
+                Engine.StopBoardAttack(run.Actors[event.EnemyId], false)
+            end
+        end
         for _, window in ipairs(run.Barricade.List) do
             publishBoardSlots(window, table.concat(window.VisualSlots, ','))
         end
@@ -213,26 +302,30 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
     end
     state = session:Snapshot().State
     if state == 'Succeeded' or state == 'Failed' then
-        -- Unfinished boards die with the result; the encounter never hands out
-        -- a board that the player earned after the round was already decided.
-        if run.Barricade then
-            run.Barricade:InterruptAll()
-            run.Barricade.Assault:InterruptAll()
-        end
+        stopWindowCombat(run)
         for _, actor in pairs(run.Actors) do Engine.Release(actor) end
         return self:Snapshot(encounterId)
     end
-    if session.Error then return self:Snapshot(encounterId), session.Error end
+    if session.Error then
+        stopWindowCombat(run)
+        return self:Snapshot(encounterId), session.Error
+    end
     local requests, spawnError = {}, nil
     if #run.Deferred == 0 then requests, spawnError = session:ClaimSpawns(now) end
-    if not requests then return self:Snapshot(encounterId), spawnError end
+    if not requests then
+        stopWindowCombat(run)
+        return self:Snapshot(encounterId), spawnError
+    end
     for _, request in ipairs(requests) do run.Deferred[#run.Deferred+1] = request end
     if #run.Deferred > 0 and now >= run.RetryAt then
         local deferred = {}
         for _, request in ipairs(run.Deferred) do
             local ok, errorCode = self:_spawn(run, request)
             if not ok then
-                if errorCode ~= 'SPAWN_SPACE_OCCUPIED' then return self:Snapshot(encounterId), errorCode end
+                if errorCode ~= 'SPAWN_SPACE_OCCUPIED' then
+                    stopWindowCombat(run)
+                    return self:Snapshot(encounterId), errorCode
+                end
                 deferred[#deferred+1] = request
             end
         end
@@ -240,6 +333,7 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
         run.RetryAt = now + session.Config.Waves[session.WaveIndex].IntervalSeconds
             * session.Config.Difficulties[session.PlayerCount].IntervalMultiplier
     end
+    publishBoardInteraction(run.Barricade, true)
     return self:Snapshot(encounterId)
 end
 
@@ -263,30 +357,53 @@ end
 
 -- Board requests are separate entry points, not extra parameters on Step, so the
 -- wave/team contract cannot be bent by an interaction caller.
-function Service:InstallBoard(encounterId, pointId, playerKey, now)
+function Service:InstallBoard(encounterId, pointId, playerKey, requestedActor)
     self:_check()
-    local run = self.Runs[encounterId]
-    if not run then return false, 'ENCOUNTER_NOT_STARTED' end
-    if not run.Barricade then return false, 'NO_WINDOWS_IN_ENCOUNTER' end
-    local state = run.Session:Snapshot().State
-    if state == 'Succeeded' or state == 'Failed' then return false, 'ENCOUNTER_ENDED' end
-    -- The window must still be the registered one, and the player must be close
-    -- enough at the moment of the request; completion re-checks both.
-    local window = run.Barricade.ById[pointId]
-    if not window then return false, 'UNKNOWN_WINDOW' end
+    local barricade = self.Barricades[encounterId]
+    if not barricade then return false, 'NO_WINDOWS_IN_ENCOUNTER' end
+    local window = barricade.ById[pointId]
+    if not window or (requestedActor and requestedActor ~= window.Actor) then return false, 'UNKNOWN_WINDOW' end
     if not Engine.InstallEligible(self.Context, playerKey, window.Actor,
-        run.Barricade:Range(pointId)) then
+        barricade:Range(pointId)) then
         return false, 'INSTALLER_INELIGIBLE'
     end
-    return run.Barricade:TryInstall(pointId, playerKey, now)
+    for _, other in pairs(self.Barricades) do
+        if other ~= barricade and other.Installer[playerKey] then return false, 'ALREADY_INSTALLING' end
+    end
+    local ok, reason = barricade:TryInstall(pointId, playerKey)
+    if ok then publishBoardInteraction(barricade, true) end
+    return ok, reason
+end
+
+function Service:CompleteBoard(encounterId, pointId, playerKey, requestedActor)
+    self:_check()
+    local barricade = self.Barricades[encounterId]
+    local window = barricade and barricade.ById[pointId]
+    if not window or (requestedActor and requestedActor ~= window.Actor) then return false, 'UNKNOWN_WINDOW' end
+    if window.Installer == nil or window.Installer ~= playerKey then return false, 'NOT_INSTALLING' end
+    if not Engine.InstallEligible(self.Context, playerKey, window.Actor, window.Config.InstallRange) then
+        self:BoardPlayerLeft(encounterId, playerKey)
+        return false, 'INSTALLER_INELIGIBLE'
+    end
+    local ok, result = barricade:CompleteInstall(pointId, playerKey)
+    if ok then
+        publishBoardSlots(window, table.concat(window.VisualSlots, ','))
+        local run = self.Runs[encounterId]
+        if run and not run.WindowCombatStopped then
+            run.PendingBoardEvents = run.PendingBoardEvents or {}
+            run.PendingBoardEvents[#run.PendingBoardEvents + 1] = {
+                Kind = 'Installed', PointId = pointId, PlayerKey = playerKey, Boards = result,
+            }
+        end
+    end
+    publishBoardInteraction(barricade, true)
+    return ok, result
 end
 
 function Service:CancelBoard(encounterId, playerKey)
     self:_check()
-    local run = self.Runs[encounterId]
-    if not run then return false, 'ENCOUNTER_NOT_STARTED' end
-    if not run.Barricade then return false, 'NO_WINDOWS_IN_ENCOUNTER' end
-    local pointId = run.Barricade:ReleasePlayer(playerKey)
+    if not self.Barricades[encounterId] then return false, 'NO_WINDOWS_IN_ENCOUNTER' end
+    local pointId = self:BoardPlayerLeft(encounterId, playerKey)
     if not pointId then return false, 'NOT_INSTALLING' end
     return true, pointId
 end
@@ -294,9 +411,18 @@ end
 -- Called by the authoritative death hook so a dead installer cannot finish a
 -- board from the corpse position on the next tick.
 function Service:BoardPlayerLeft(encounterId, playerKey)
-    local run = self.Runs[encounterId]
-    if not run or not run.Barricade then return nil end
-    return run.Barricade:ReleasePlayer(playerKey)
+    local barricade = self.Barricades[encounterId]
+    if not barricade then return nil end
+    local pointId = barricade:ReleasePlayer(playerKey)
+    if pointId then publishBoardInteraction(barricade, true) end
+    return pointId
+end
+
+function Service:ReleaseBoardPlayer(playerKey)
+    for encounterId in pairs(self.Barricades) do
+        local pointId = self:BoardPlayerLeft(encounterId, playerKey)
+        if pointId then return pointId end
+    end
 end
 
 function Service:DamageBoard(encounterId, pointId, amount, now)
@@ -310,6 +436,7 @@ function Service:DamageBoard(encounterId, pointId, amount, now)
     if hit and hit.Destroyed > 0 then
         local window = run.Barricade.ById[pointId]
         publishBoardSlots(window, table.concat(window.VisualSlots, ','))
+        publishBoardInteraction(run.Barricade, true)
     end
     return hit, reason
 end
@@ -322,19 +449,23 @@ function Service:BeginClimb(encounterId, pointId, enemyId)
     if not run.Barricade then return false, 'NO_WINDOWS_IN_ENCOUNTER' end
     local state = run.Session:Snapshot().State
     if state == 'Succeeded' or state == 'Failed' then return false, 'ENCOUNTER_ENDED' end
-    return run.Barricade:BeginClimb(pointId, enemyId)
+    local ok, result = run.Barricade:BeginClimb(pointId, enemyId)
+    if ok then publishBoardInteraction(run.Barricade, true) end
+    return ok, result
 end
 
 function Service:EndClimb(encounterId, pointId, enemyId)
     local run = self.Runs[encounterId]
     if not run or not run.Barricade then return false, 'NO_WINDOWS_IN_ENCOUNTER' end
-    return run.Barricade:EndClimb(pointId, enemyId)
+    local ok, reason = run.Barricade:EndClimb(pointId, enemyId)
+    if ok then publishBoardInteraction(run.Barricade, true) end
+    return ok, reason
 end
 
 function Service:Board(encounterId, pointId)
-    local run = self.Runs[encounterId]
-    if not run or not run.Barricade then return nil, 'NO_WINDOWS_IN_ENCOUNTER' end
-    return run.Barricade:Snapshot(pointId)
+    local barricade = self.Barricades[encounterId]
+    if not barricade then return nil, 'NO_WINDOWS_IN_ENCOUNTER' end
+    return barricade:Snapshot(pointId)
 end
 
 -- Freeze a running encounter with a named diagnostic. Used by the roster when reality
@@ -347,19 +478,21 @@ function Service:ReportError(encounterId, code)
     local state = run.Session:Snapshot().State
     if state == 'Succeeded' or state == 'Failed' then return false end
     run.Error = code
+    stopWindowCombat(run)
     return true
 end
 
 function Service:Shutdown()
     if self.Closed then return end
     for _, run in pairs(self.Runs) do
-        if run.Barricade then
-            run.Barricade:InterruptAll()
-            run.Barricade.Assault:InterruptAll()
-            for _, window in ipairs(run.Barricade.List) do publishBoardSlots(window, '') end
-        end
+        stopWindowCombat(run)
         for _, actor in pairs(run.Actors) do Engine.Release(actor) end
         encounterOwners[run.StartPoint] = nil
+    end
+    for _, barricade in pairs(self.Barricades) do
+        barricade:InterruptAll()
+        for _, window in ipairs(barricade.List) do publishBoardSlots(window, '') end
+        publishBoardInteraction(barricade, false)
     end
     self.Closed = true
     active[self.Context] = nil

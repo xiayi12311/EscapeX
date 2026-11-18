@@ -18,9 +18,13 @@ local function config(entry)
     assert(type(entry) == 'table', 'INVALID_ASSAULT_CONFIG')
     positive(entry.DamagePerSecond, 'INVALID_ASSAULT_DPS')
     positive(entry.AttackRange, 'INVALID_ASSAULT_RANGE')
+    positive(entry.SwingInterval, 'INVALID_SWING_INTERVAL')
+    positive(entry.HitDelay, 'INVALID_SWING_HIT_DELAY')
+    assert(entry.HitDelay < entry.SwingInterval, 'INVALID_SWING_HIT_DELAY')
     positive(entry.ClimbSeconds, 'INVALID_CLIMB_SECONDS')
     positive(entry.MaxAttackers, 'INVALID_MAX_ATTACKERS', true)
     return {DamagePerSecond = entry.DamagePerSecond, AttackRange = entry.AttackRange,
+        SwingInterval = entry.SwingInterval, HitDelay = entry.HitDelay,
         ClimbSeconds = entry.ClimbSeconds, MaxAttackers = entry.MaxAttackers}
 end
 
@@ -36,7 +40,7 @@ function Assault.New(configs)
         count = count + 1
     end
     assert(count > 0, 'INVALID_ASSAULT_CONFIGS')
-    return setmetatable({ByPoint = byPoint, Time = nil, Pending = {}, Climbs = {}}, Assault)
+    return setmetatable({ByPoint = byPoint, Time = nil, Swings = {}, Climbs = {}}, Assault)
 end
 
 function Assault:Config(pointId)
@@ -52,9 +56,7 @@ end
 function Assault:_time(now)
     assert(type(now) == 'number' and now == now and now >= 0, 'INVALID_TIME')
     assert(not self.Time or now >= self.Time, 'TIME_REVERSED')
-    local delta = self.Time and (now - self.Time) or 0
     self.Time = now
-    return delta
 end
 
 function Assault:_dropClimb(barricade, pointId)
@@ -71,8 +73,8 @@ end
 function Assault:Advance(barricade, contacts, now, vault)
     assert(type(barricade) == 'table', 'MISSING_BARRICADE')
     assert(type(contacts) == 'table', 'MISSING_CONTACTS')
-    local delta = self:_time(now)
-    local events, seen, ended = {}, {}, {}
+    self:_time(now)
+    local events, seen, ended, attacking = {}, {}, {}, {}
     for pointId, climb in pairs(self.Climbs) do
         local status = vault.Status(pointId, climb.EnemyId)
         if status ~= "Moving" or now >= climb.EndsAt then
@@ -95,24 +97,33 @@ function Assault:Advance(barricade, contacts, now, vault)
         local attackers = #contact.EnemyIds
         if attackers > profile.MaxAttackers then attackers = profile.MaxAttackers end
         if #window.Boards > 0 then
-            if attackers > 0 and delta > 0 then
-                local pending = (self.Pending[pointId] or 0)
-                    + profile.DamagePerSecond * attackers * delta
-                local whole = math.floor(pending)
-                self.Pending[pointId] = pending - whole
-                if whole > 0 then
-                    local hit, reason = barricade:Damage(pointId, whole, now)
-                    if not hit then
-                        events[#events + 1] = {Kind = 'Rejected', PointId = pointId, Reason = reason}
-                    else
-                        events[#events + 1] = {Kind = 'BoardDamaged', PointId = pointId,
-                            By = attackers, Boards = hit.Boards, Destroyed = hit.Destroyed,
-                            Passable = hit.Passable}
+            local hits = 0
+            for index = 1, attackers do
+                local enemyId = contact.EnemyIds[index]
+                local swing = self.Swings[enemyId]
+                if swing and swing.PointId == pointId and swing.HitAt and now >= swing.HitAt then
+                    if not vault or not vault.IsAttacking or vault.IsAttacking(enemyId) then hits = hits + 1 end
+                    swing.HitAt = nil
+                end
+            end
+            if hits > 0 then
+                local hit = assert(barricade:Damage(pointId, hits * profile.DamagePerSecond * profile.SwingInterval, now))
+                events[#events + 1] = {Kind = 'BoardDamaged', PointId = pointId,
+                    By = hits, Boards = hit.Boards, Destroyed = hit.Destroyed, Passable = hit.Passable}
+            end
+            if #window.Boards > 0 then
+                for index = 1, attackers do
+                    local enemyId = contact.EnemyIds[index]
+                    local swing = self.Swings[enemyId]
+                    if not swing or now >= swing.NextAt then
+                        swing = {PointId = pointId, HitAt = now + profile.HitDelay, NextAt = now + profile.SwingInterval}
+                        self.Swings[enemyId] = swing
+                        events[#events + 1] = {Kind = 'BoardSwing', PointId = pointId, EnemyId = enemyId}
                     end
+                    if swing.PointId == pointId then attacking[enemyId] = true end
                 end
             end
         else
-            self.Pending[pointId] = nil
             if vault and not ended[pointId] and not self.Climbs[pointId] then
                 for _, enemyId in ipairs(contact.EnemyIds) do
                     if vault.Ready(pointId, enemyId) then
@@ -135,6 +146,14 @@ function Assault:Advance(barricade, contacts, now, vault)
             end
         end
     end
+    for enemyId, swing in pairs(self.Swings) do
+        if not attacking[enemyId] then
+            self.Swings[enemyId] = nil
+            if swing.HitAt then
+                events[#events + 1] = {Kind = 'BoardSwingInterrupted', PointId = swing.PointId, EnemyId = enemyId}
+            end
+        end
+    end
     return events
 end
 
@@ -143,6 +162,7 @@ end
 function Assault:ReleaseEnemy(barricade, enemyId)
     assert(type(barricade) == 'table', 'MISSING_BARRICADE')
     local events = {}
+    self.Swings[enemyId] = nil
     for pointId, climb in pairs(self.Climbs) do
         if climb.EnemyId == enemyId then
             self.Climbs[pointId] = nil
@@ -153,10 +173,14 @@ function Assault:ReleaseEnemy(barricade, enemyId)
     return events
 end
 
+function Assault:CancelSwing(enemyId)
+    self.Swings[enemyId] = nil
+end
+
 function Assault:InterruptAll()
     local count = 0
     for _ in pairs(self.Climbs) do count = count + 1 end
-    self.Climbs, self.Pending = {}, {}
+    self.Climbs, self.Swings = {}, {}
     return count
 end
 

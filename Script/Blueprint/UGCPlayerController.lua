@@ -61,7 +61,7 @@ function PlayerController:GetAvailableServerRPCs()
         'ServerOpenDefenseShop', 'ClientOpenDefenseShop', 'ClientDefenseShopDenied', 'RPC_Server_RequestHospitalShopState',
         'RPC_Server_BuyCommodity', 'RPC_Server_RefreshHospitalShop', 'RPC_Server_LockHospitalShop',
         'RPC_Client_HospitalShopState',
-        'ServerRequestZombieBoard', 'ServerCancelZombieBoard', 'ClientZombieBoardResult'
+        'ServerRequestZombieBoard', 'ServerCompleteZombieBoard', 'ServerCancelZombieBoard', 'ClientZombieBoardResult'
 end
 
 function PlayerController:ServerOpenDefenseShop(point)
@@ -216,24 +216,25 @@ function PlayerController:ServerRequestZombieBoard(point, sequence)
     if not self:HasAuthority() or not validSequence(sequence)
         or sequence <= (self.ZombieBoardSequence or 0) then return end
     self.ZombieBoardSequence = sequence
-    local ok, reason = ZombieBoard.RequestInstall(self, point)
-    UnrealNetwork.CallUnrealRPC(self, self, 'ClientZombieBoardResult', sequence, ok,
-        ok and nil or ZombieBoard.ErrorText(reason))
+    local ok = ZombieBoard.RequestInstall(self, point)
+    UnrealNetwork.CallUnrealRPC(self, self, 'ClientZombieBoardResult', sequence, ok, false)
+end
+
+function PlayerController:ServerCompleteZombieBoard(point, sequence)
+    if not self:HasAuthority() or not validSequence(sequence) or sequence ~= self.ZombieBoardSequence then return end
+    local ok = ZombieBoard.CompleteInstall(self, point)
+    UnrealNetwork.CallUnrealRPC(self, self, 'ClientZombieBoardResult', sequence, ok, true)
 end
 
 function PlayerController:ServerCancelZombieBoard(sequence)
     if not self:HasAuthority() or not validSequence(sequence)
-        or sequence <= (self.ZombieBoardCancelSequence or 0) then return end
-    self.ZombieBoardCancelSequence = sequence
-    local ok, reason = ZombieBoard.CancelInstall(self)
-    if not ok then
-        UnrealNetwork.CallUnrealRPC(self, self, 'ClientZombieBoardResult', sequence, false,
-            ZombieBoard.ErrorText(reason))
-    end
+        or sequence <= (self.ZombieBoardSequence or 0) then return end
+    self.ZombieBoardSequence = sequence
+    ZombieBoard.CancelInstall(self)
 end
 
-function PlayerController:ClientZombieBoardResult(sequence, ok, reason)
-    ZombieBoardFocus.Result(sequence, ok, reason)
+function PlayerController:ClientZombieBoardResult(sequence, ok, completed)
+    ZombieBoardFocus.Result(sequence, ok, completed)
 end
 
 -- A silent disconnect keeps the controller alive and never raises the game mode's

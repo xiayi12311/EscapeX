@@ -26,7 +26,7 @@ local function windowConfig(config)
         ClimbCapacity = config.ClimbCapacity}
 end
 
--- windows: array of {PointId = string, Actor = any, Config = catalog Barricades entry}
+-- windows: array of {PointId = string, Actor = any, Config = authored board settings}
 function Barricade.New(windows)
     assert(type(windows) == 'table', 'INVALID_WINDOWS')
     local list, byId = {}, {}
@@ -36,8 +36,7 @@ function Barricade.New(windows)
         assert(type(pointId) == 'string' and pointId ~= '', 'INVALID_WINDOW_ID')
         assert(not byId[pointId], 'DUPLICATE_WINDOW_ID: ' .. pointId)
         local window = {PointId = pointId, Actor = entry.Actor,
-            Config = windowConfig(entry.Config), Boards = {}, VisualSlots = {}, Installer = nil,
-            InstallEndsAt = nil, Climbers = {}}
+            Config = windowConfig(entry.Config), Boards = {}, VisualSlots = {}, Installer = nil, Climbers = {}}
         byId[pointId] = window
         list[#list + 1] = window
     end
@@ -73,7 +72,7 @@ function Barricade:Snapshot(pointId)
     for _, value in ipairs(window.Boards) do durability = durability + value end
     return {PointId = pointId, Boards = #window.Boards,
         MaxBoards = window.Config.BoardsPerWindow, Durability = durability,
-        Installer = window.Installer, InstallEndsAt = window.InstallEndsAt,
+        Installer = window.Installer,
         InstallRange = window.Config.InstallRange,
         Passable = #window.Boards == 0, Climbers = #window.Climbers}
 end
@@ -92,8 +91,7 @@ end
 
 -- One installer per window and one window per player; a passing zombie blocks a
 -- new board, because the board would otherwise seal the entrance mid-climb.
-function Barricade:TryInstall(pointId, playerKey, now)
-    self:_time(now)
+function Barricade:TryInstall(pointId, playerKey)
     assert(type(playerKey) == 'number' and playerKey >= 0, 'INVALID_PLAYER_KEY')
     local window, reason = self:_window(pointId)
     if not window then return false, reason end
@@ -105,7 +103,6 @@ function Barricade:TryInstall(pointId, playerKey, now)
     if self.Installer[playerKey] then return false, 'ALREADY_INSTALLING' end
     if #window.Climbers > 0 then return false, 'CLIMB_IN_PROGRESS' end
     window.Installer = playerKey
-    window.InstallEndsAt = now + window.Config.InstallSeconds
     self.Installer[playerKey] = pointId
     return true
 end
@@ -117,7 +114,7 @@ function Barricade:ReleasePlayer(playerKey)
     local window = self.ById[pointId]
     self.Installer[playerKey] = nil
     if window and window.Installer == playerKey then
-        window.Installer, window.InstallEndsAt = nil, nil
+        window.Installer = nil
     end
     return pointId
 end
@@ -136,7 +133,7 @@ function Barricade:InterruptAll()
     for _, window in ipairs(self.List) do
         if window.Installer then
             self.Installer[window.Installer] = nil
-            window.Installer, window.InstallEndsAt = nil, nil
+            window.Installer = nil
             interrupted = interrupted + 1
         end
     end
@@ -151,38 +148,17 @@ local function nextVisualSlot(window)
     end
 end
 
--- Re-checks the installer at completion: distance, liveness and a climb that
--- started meanwhile all void the unfinished board instead of granting it late.
-function Barricade:Advance(now, isEligible)
-    self:_time(now)
-    assert(type(isEligible) == 'function', 'MISSING_ELIGIBILITY')
-    local events = {}
-    for _, window in ipairs(self.List) do
-        local key = window.Installer
-        if key and now >= window.InstallEndsAt then
-            window.Installer, window.InstallEndsAt = nil, nil
-            self.Installer[key] = nil
-            local reason
-            if #window.Climbers > 0 then
-                reason = 'CLIMB_IN_PROGRESS'
-            elseif not isEligible(key, window.PointId, window.Actor) then
-                reason = 'INSTALLER_INELIGIBLE'
-            elseif #window.Boards >= window.Config.BoardsPerWindow then
-                reason = 'WINDOW_FULL'
-            end
-            local event = {PointId = window.PointId, PlayerKey = key}
-            if reason then
-                event.Kind, event.Reason = 'Interrupted', reason
-            else
-                local slot = assert(nextVisualSlot(window), 'NO_FREE_BOARD_VISUAL_SLOT')
-                window.Boards[#window.Boards + 1] = window.Config.BoardDurability
-                window.VisualSlots[#window.VisualSlots + 1] = slot
-                event.Kind, event.Boards = 'Installed', #window.Boards
-            end
-            events[#events + 1] = event
-        end
-    end
-    return events
+function Barricade:CompleteInstall(pointId, playerKey)
+    local window, reason = self:_window(pointId)
+    if not window then return false, reason end
+    if window.Installer == nil or window.Installer ~= playerKey then return false, 'NOT_INSTALLING' end
+    self:ReleasePlayer(playerKey)
+    if #window.Climbers > 0 then return false, 'CLIMB_IN_PROGRESS' end
+    if #window.Boards >= window.Config.BoardsPerWindow then return false, 'WINDOW_FULL' end
+    local slot = assert(nextVisualSlot(window), 'NO_FREE_BOARD_VISUAL_SLOT')
+    window.Boards[#window.Boards + 1] = window.Config.BoardDurability
+    window.VisualSlots[#window.VisualSlots + 1] = slot
+    return true, #window.Boards
 end
 
 -- Reserved contract for the zombie-side traversal integration. Climbing wins
@@ -199,7 +175,7 @@ function Barricade:BeginClimb(pointId, enemyId)
     if window.Installer then
         interrupted = window.Installer
         self.Installer[interrupted] = nil
-        window.Installer, window.InstallEndsAt = nil, nil
+        window.Installer = nil
     end
     window.Climbers[#window.Climbers + 1] = enemyId
     return true, interrupted

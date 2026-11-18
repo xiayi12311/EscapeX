@@ -25,10 +25,27 @@ local Message = {
     INVALID_START_POINT = '启动点类型不匹配',
     GAMEMODE_UNAVAILABLE = 'GameMode 不可用',
     INVALID_START_REQUEST = '启动请求无效',
+    WAVE_TABLE_UNAVAILABLE = '守点数据表读取失败或内容为空',
+    WAVE_TABLE_INVALID_INDEX = '表格编号无效',
+    WAVE_TABLE_DUPLICATE_INDEX = '表格编号重复',
+    WAVE_TABLE_MISSING_INDEX = '表格缺少必填行',
+    WAVE_TABLE_INVALID_PREPARATION = '准备阶段的数量、批大小、批次间隔须填 0',
+    INVALID_PREPARATION = '开局准备时间无效',
+    INVALID_COUNT = '每波刷怪总数须为正整数',
+    INVALID_BATCH = '每批数量须为正整数',
+    INVALID_INTERVAL = '批次间隔须大于 0',
+    INVALID_REST = '休息时间须为非负数',
+    FINAL_WAVE_REST = '最后一波的休息时间须填 0',
+    INVALID_MULTIPLIER = '数量倍率须大于 0',
+    INVALID_INTERVAL_MULTIPLIER = '间隔倍率须大于 0',
+    INVALID_LIMIT = '同场存活上限须为正整数',
 }
 function M.ErrorText(reason)
     if type(reason) ~= 'table' then
-        return Message[reason] or tostring(reason)
+        local text = tostring(reason)
+        local code, detail = text:match('^([A-Z_]+): (.+)$')
+        if code and Message[code] then return Message[code] .. '（' .. detail .. '）' end
+        return Message[text] or text
     end
     local parts = {}
     for _, issue in ipairs(reason) do

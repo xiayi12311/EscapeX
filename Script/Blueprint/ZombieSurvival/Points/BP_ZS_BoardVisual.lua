@@ -1,6 +1,7 @@
 ---@class BP_ZS_BoardVisual_C:AActor
 ---@field RemoveSequence UActorSequenceComponent
 ---@field InstallSequence UActorSequenceComponent
+---@field BoardCollision UBoxComponent
 ---@field BoardMesh UStaticMeshComponent
 ---@field BoardPivot USceneComponent
 ---@field DefaultSceneRoot USceneComponent

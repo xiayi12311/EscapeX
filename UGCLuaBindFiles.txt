@@ -29,6 +29,7 @@ Script/Blueprint/Prefabs/Projectiles/ZombieBossProj.lua
 Script/Blueprint/Prefabs/Skills/Blueprint/Prefabs/Skills/HTDetectSkill.lua
 Script/Blueprint/Prefabs/Skills/testskill.lua
 Script/Blueprint/Prefabs/Skills/ZombieBossSkill_1.lua
+Script/Blueprint/Prefabs/Skills/ZS_BoardClaw.lua
 Script/Blueprint/Prefabs/Skills/ZS_PoliceWindowVault.lua
 Script/Blueprint/Prefabs/Skills/ZS_WindowVault.lua
 Script/Blueprint/Prefabs/Triggers/BP_AirWall.lua
@@ -40,6 +41,7 @@ Script/Blueprint/UGCGameState.lua
 Script/Blueprint/UGCPlayerController.lua
 Script/Blueprint/UGCPlayerPawn.lua
 Script/Blueprint/ZombieSurvival/Points/BP_ZS_BoardVisual.lua
+Script/Blueprint/ZombieSurvival/Points/BP_ZS_ShopPoint.lua
 Script/Blueprint/ZombieSurvival/Points/BP_ZS_StartPoint.lua
 Script/Blueprint/ZombieSurvival/Points/BP_ZS_WindowPoint.lua
 Script/Common/TestAutoRevive.lua
@@ -80,6 +82,8 @@ Script/Gameplay/ZombieDefense/DefenseEngineAdapter.lua
 Script/Gameplay/ZombieDefense/DefensePointRegistry.lua
 Script/Gameplay/ZombieDefense/DefenseService.lua
 Script/Gameplay/ZombieDefense/DefenseSession.lua
+Script/Gameplay/ZombieDefense/DefenseShopPresentation.lua
+Script/Gameplay/ZombieDefense/DefenseShopStock.lua
 Script/Gameplay/ZombieDefense/DefenseSpawnPlacement.lua
 Script/Gameplay/ZombieDefense/DefenseStartFocus.lua
 Script/Gameplay/ZombieDefense/DefenseStartInteraction.lua
@@ -87,6 +91,8 @@ Script/Gameplay/ZombieDefense/DefenseTeamPolicy.lua
 Script/Gameplay/ZombieDefense/DefenseTestDriver.lua
 Script/Gameplay/ZombieDefense/DefenseTestLoadout.lua
 Script/Gameplay/ZombieDefense/DefenseWaveHUD.lua
+Script/Gameplay/ZombieDefense/DefenseWindowGeometry.lua
+Script/Gameplay/ZombieDefense/DefenseWindowQueue.lua
 Script/Gameplay/ZombieDefense/DefenseWorldPoints.lua
 Script/Gameplay/ZombieDefense/DefenseZombieAssault.lua
 Script/MIG/Blueprint/AI_PatientMonster/WBP_Interact_patient.lua
@@ -97,11 +103,6 @@ Script/Sequences/Run1.lua
 Script/UI/EnemyArrow/HTArrowConfig.lua
 Script/UI/EnemyArrow/HTArrowState.lua
 Script/UI/EnemyArrow/WBP_HTEnemyArrow.lua
-Script/UI/WBP_BlackBoard.lua
-Script/UI/ZombieSurvival/WBP_ZS_StatusHUD.lua
-Script/Blueprint/ZombieSurvival/Points/BP_ZS_ShopPoint.lua
-Script/Gameplay/ZombieDefense/DefenseShopPresentation.lua
-Script/Gameplay/ZombieDefense/DefenseShopStock.lua
 Script/UI/Hospital/HospitalShopData.lua
 Script/UI/Hospital/HospitalShopPage.lua
 Script/UI/Hospital/WBP_CommodityIntro.lua
@@ -109,6 +110,8 @@ Script/UI/Hospital/WBP_HospitalShop.lua
 Script/UI/Hospital/WBP_HospitalShopItem.lua
 Script/UI/Hospital/WBP_HospitalShopPermanent.lua
 Script/UI/Hospital/WBP_HospitalShopRandom.lua
+Script/UI/WBP_BlackBoard.lua
+Script/UI/ZombieSurvival/WBP_ZS_StatusHUD.lua
 Script/utils/HospitalShopDelivery.lua
 Script/utils/HospitalShopRandom.lua
 Script/utils/HospitalShopService.lua

@@ -2,6 +2,7 @@ local UGCPlayerPawn = {}
 
 function UGCPlayerPawn:ReceiveBeginPlay()
     self.bVaultIsOpen = true
+    self.IsOpenShovelAbility = true
     UGCPlayerPawn.SuperClass.ReceiveBeginPlay(self)
     local Loadout = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestLoadout')
     Loadout.Schedule(self)

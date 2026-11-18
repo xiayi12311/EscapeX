@@ -18,7 +18,7 @@ function Session.New(config, instanceId, playerCount)
     number(playerCount, 'INVALID_PLAYER_COUNT', 1, true)
     assert(playerCount <= 4, 'INVALID_PLAYER_COUNT')
     assert(type(config) == 'table' and type(config.Version) == 'string', 'INVALID_CONFIG')
-    number(config.PreparationSeconds, 'INVALID_PREPARATION', 0)
+    number(config.PreparationSeconds, 'INVALID_PREPARATION: Phase=0 WaitSeconds', 0)
     assert(type(config.Waves) == 'table' and #config.Waves > 0, 'INVALID_WAVES')
     local waveCount = 0
     for index in pairs(config.Waves) do
@@ -27,22 +27,27 @@ function Session.New(config, instanceId, playerCount)
     end
     assert(waveCount == #config.Waves, 'NONCONTIGUOUS_WAVES')
     for index, wave in ipairs(config.Waves) do
-        number(wave.Count, 'INVALID_COUNT', 1, true)
-        number(wave.BatchSize, 'INVALID_BATCH', 1, true)
-        number(wave.IntervalSeconds, 'INVALID_INTERVAL', 0)
-        assert(wave.IntervalSeconds > 0, 'INVALID_INTERVAL')
-        number(wave.RestSeconds, 'INVALID_REST', 0)
-        assert(index ~= #config.Waves or wave.RestSeconds == 0, 'FINAL_WAVE_REST')
+        local phase = ': Phase=' .. index
+        number(wave.Count, 'INVALID_COUNT' .. phase .. ' Count', 1, true)
+        number(wave.BatchSize, 'INVALID_BATCH' .. phase .. ' BatchSize', 1, true)
+        local interval = 'INVALID_INTERVAL' .. phase .. ' IntervalSeconds'
+        number(wave.IntervalSeconds, interval, 0)
+        assert(wave.IntervalSeconds > 0, interval)
+        number(wave.RestSeconds, 'INVALID_REST' .. phase .. ' WaitSeconds', 0)
+        assert(index ~= #config.Waves or wave.RestSeconds == 0, 'FINAL_WAVE_REST' .. phase .. ' WaitSeconds')
     end
     assert(type(config.Difficulties) == 'table', 'INVALID_DIFFICULTIES')
     for count = 1, 4 do
         local difficulty = config.Difficulties[count]
         assert(type(difficulty) == 'table', 'MISSING_DIFFICULTY')
-        number(difficulty.CountMultiplier, 'INVALID_MULTIPLIER', 0)
-        number(difficulty.IntervalMultiplier, 'INVALID_INTERVAL_MULTIPLIER', 0)
-        assert(difficulty.CountMultiplier > 0 and difficulty.IntervalMultiplier > 0,
-            'INVALID_MULTIPLIER')
-        number(difficulty.AliveLimit, 'INVALID_LIMIT', 1, true)
+        local player = ': PlayerCount=' .. count
+        local countError = 'INVALID_MULTIPLIER' .. player .. ' CountMultiplier'
+        local intervalError = 'INVALID_INTERVAL_MULTIPLIER' .. player .. ' IntervalMultiplier'
+        number(difficulty.CountMultiplier, countError, 0)
+        number(difficulty.IntervalMultiplier, intervalError, 0)
+        assert(difficulty.CountMultiplier > 0, countError)
+        assert(difficulty.IntervalMultiplier > 0, intervalError)
+        number(difficulty.AliveLimit, 'INVALID_LIMIT' .. player .. ' AliveLimit', 1, true)
     end
     return setmetatable({Config = copy(config), InstanceId = instanceId,
         PlayerCount = playerCount, State = 'Idle',

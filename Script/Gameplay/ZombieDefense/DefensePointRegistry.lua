@@ -4,8 +4,9 @@ Registry.__index = Registry
 local Specs = {
     Spawn = {Fields = {SpawnGroupId = 'SpawnGroups', EnemyConfigId = 'Enemies'},
         Components = {'SpawnDirection'}},
-    Window = {Fields = {EntranceGroupId = 'EntranceGroups', BarricadeConfigId = 'Barricades'},
-        Components = {'OutsideApproach', 'InsideLanding', 'BoardRoot', 'InteractionPoint'}},
+    Window = {Fields = {},
+        Components = {'OutsideApproach', 'InsideLanding', 'BoardRoot', 'InteractionPoint',
+            'VaultBlocker', 'WindowInteractionQuery'}},
     Shop = {Fields = {ShopConfigId = 'Shops'}, Components = {'InteractionPoint'}},
     Start = {Fields = {ModeConfigId = 'Modes'}, Components = {'InteractionPoint'}},
 }

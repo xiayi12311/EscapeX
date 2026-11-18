@@ -7,7 +7,32 @@ local PushPull = UGCGameSystem.UGCRequire("Script.Gameplay.PushPull.PushPullServ
 local Capture = UGCGameSystem.UGCRequire("Script.Gameplay.Capture.CaptureService")
 local FirstPerson = UGCGameSystem.UGCRequire("Script.Gameplay.FirstPerson")
 
+local function defenseService(gameMode)
+    if gameMode.ZombieDefenseService then return gameMode.ZombieDefenseService end
+    local Service = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseService')
+    local Catalog = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseCatalog')
+    local service, reason = Service.New(gameMode, Catalog)
+    gameMode.ZombieDefenseService = service
+    return service, reason
+end
+
+local function startBoardInstalls(gameMode)
+    local service, reason = defenseService(gameMode)
+    local ok
+    if service then ok, reason = service:PrepareBoards() end
+    if not ok then
+        local Board = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBoardInteraction')
+        ugcprint('[ZombieDefense] Window setup failed: ' .. Board.ErrorText(reason))
+        return
+    end
+    if not next(service.Barricades) then return end
+    gameMode.ZombieBoardTimer = UGCTimerUtility.CreateLuaTimer(service.Catalog.BoardInstallCheckSeconds, function()
+        service:TickBoardInstalls()
+    end, true)
+end
+
 function UGCGameMode:ReceiveBeginPlay()
+    self.IsOpenShovelAbility = true
     UGCGameMode.SuperClass.ReceiveBeginPlay(self)
     if self:HasAuthority() and self.HTBuildNavigationOnStart then
         -- This map has no exported .navmesh yet. Build its configured bounds
@@ -19,6 +44,7 @@ function UGCGameMode:ReceiveBeginPlay()
     DeskSearch.Setup(self)
     Capture.Setup(self)
     PushPull.Setup(self)
+    if self:HasAuthority() then startBoardInstalls(self) end
 end
 
 function UGCGameMode:ReceiveEndPlay(Reason)
@@ -128,21 +154,17 @@ end
 -- Explicit server entry only. Never started by BeginPlay; caller owns team rules.
 function UGCGameMode:StartZombieDefense(EncounterId, InstanceId, PlayerCount)
     assert(self:HasAuthority(), 'DEFENSE_SERVER_ONLY')
-    if not self.ZombieDefenseService then
-        local Service = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseService')
-        local Catalog = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseCatalog')
-        local service, reason = Service.New(self, Catalog)
-        if not service then return false, reason end
-        self.ZombieDefenseService = service
-    end
-    return self.ZombieDefenseService:Start(EncounterId, InstanceId, PlayerCount,
-        UGCGameSystem.GetServerTimeSec())
+    local service, reason = defenseService(self)
+    if not service then return false, reason end
+    return service:Start(EncounterId, InstanceId, PlayerCount,
+        KismetSystemLibrary.GetGameTimeInSeconds(self))
 end
 
 function UGCGameMode:StepZombieDefense(EncounterId, TeamFailed, DeferVictory)
     assert(self:HasAuthority(), 'DEFENSE_SERVER_ONLY')
     if not self.ZombieDefenseService then return nil, 'DEFENSE_NOT_INITIALIZED' end
-    return self.ZombieDefenseService:Step(EncounterId, UGCGameSystem.GetServerTimeSec(), TeamFailed, DeferVictory)
+    return self.ZombieDefenseService:Step(EncounterId,
+        KismetSystemLibrary.GetGameTimeInSeconds(self), TeamFailed, DeferVictory)
 end
 
 function UGCGameMode:RequestZombieDefenseRevive(EncounterId,PlayerKey)
@@ -151,6 +173,10 @@ function UGCGameMode:RequestZombieDefenseRevive(EncounterId,PlayerKey)
 end
 
 function UGCGameMode:ShutdownZombieDefense()
+    if self.ZombieBoardTimer then
+        UGCTimerUtility.RemoveLuaTimer(self.ZombieBoardTimer)
+        self.ZombieBoardTimer = nil
+    end
     local Driver = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestDriver')
     Driver.Stop(self)
     local Team=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')

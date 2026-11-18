@@ -1,11 +1,4 @@
--- Reuses the same shared widget shell as the start point. The label is driven by
--- the replicated board status, so a teammate's install shows up without a second
--- RPC, and pressing again while installing cancels this player's own board.
--- The crosshair may find a window from further away than the install range, so
--- the prompt is filtered by the same InstallRange the server enforces; a prompt
--- that only ever produces a refusal is worse than no prompt.
 local UI = UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullConfig').Interaction
-local Board = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseBoardInteraction')
 local World = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWorldPoints')
 local M = {}
 M.Config = {DetectInterval = UI.DetectInterval, TraceReach = 350}
@@ -14,7 +7,21 @@ local function valid(o) return o ~= nil and KismetSystemLibrary.IsValid(o) end
 local function clear(c)
     if valid(c.target) then UGCGameSystem.DrawOutline(c.target, false, UI.OutlineThickness, UI.OutlineColor) end
     c.target = nil
-    c.status = nil
+end
+
+local function nextSequence(pc)
+    local sequence = (pc.ZombieBoardClientSequence or 0) + 1
+    pc.ZombieBoardClientSequence = sequence
+    return sequence
+end
+
+local function release(c)
+    local hold = c.hold
+    if not hold then return end
+    c.hold = nil
+    if valid(c.pc) and not hold.finished and not hold.submitted then
+        UnrealNetwork.CallUnrealRPC(c.pc, c.pc, 'ServerCancelZombieBoard', nextSequence(c.pc))
+    end
 end
 local function anchorOf(point)
     if valid(point.InteractionPoint) then return point.InteractionPoint:K2_GetComponentLocation() end
@@ -43,67 +50,69 @@ local function tracePoint(c, pawn)
     for _, hit in ipairs(hits) do
         local actor = hit.Actor and hit.Actor:Get()
         if valid(actor) then
-            -- Only the first blocking actor decides: a window behind a wall must
-            -- not become interactable through it.
-            if UE.IsA(actor, c.class) and actor.Enabled == true then return actor end
+            -- Installed planks belong to the window that spawned them. Other
+            -- blockers still terminate the trace before it can reach the window.
+            local point = UE.IsA(actor, c.class) and actor or UGCActorComponentUtility.GetOwner(actor)
+            if valid(point) and UE.IsA(point, c.class) and point.Enabled == true then return point end
             return nil
         end
     end
     return nil
 end
-local function label(c)
-    if c.error then return '安装失败: '..c.error end
-    if c.pending then return Board.Config.BusyLabel end
-    if c.status and c.status.Boards >= c.status.MaxBoards then return Board.Config.FullLabel end
-    if c.installing then return Board.Config.CancelLabel end
-    if c.status and c.status.Boards > 0 then return Board.Config.InstalledLabel end
-    return Board.Config.Label
-end
 function M.Update()
     local c = current
     if not c or not valid(c.widget) then return end
-    local gm = UGCGameSystem.GetGameMode()
     local pawn = UGCGameSystem.GetLocalPlayerPawn()
-    local found = valid(pawn) and tracePoint(c, pawn) or nil
-    local status = valid(found) and Board.Status(gm, found) or nil
-    if found and status and distanceTo(pawn, found) > status.InstallRange then
-        found, status = nil, nil
+    local found = valid(pawn) and UGCAttributeSystem.GetGameAttributeValue(pawn, 'Health') > 0
+        and tracePoint(c, pawn) or nil
+    if found and distanceTo(pawn, found) > found.InstallRange then
+        found = nil
     end
-    if found ~= c.target then
-        c.error = nil
+    if c.hold and (c.hold.point ~= found or c.hold.pawn ~= pawn) then release(c) end
+    local hold = c.hold
+    local status = found and found.DefenseBoardInteractionState
+    if hold and status then
+        if status.Installer == c.key then
+            hold.observed = true
+        elseif not hold.submitted and (hold.observed or status.Installer ~= nil) then
+            hold.finished = true
+        end
+    end
+    if hold and hold.finished and hold.released then
+        c.hold, hold = nil, nil
+    end
+    local holding = hold and not hold.finished
+    local target = status and (status.Available or holding) and found or nil
+    if target ~= c.target then
         clear(c)
-        c.target, c.status = found, status
-        -- A window that already belongs to another installer still shows state,
-        -- but this player's own pending install flag must not survive a retarget.
-        c.installing = found ~= nil and status ~= nil and status.Installer == c.key
-        if valid(found) then UGCGameSystem.DrawOutline(found, true, UI.OutlineThickness, UI.OutlineColor) end
+        c.target = target
+        if valid(target) then UGCGameSystem.DrawOutline(target, true, UI.OutlineThickness, UI.OutlineColor) end
         c.widget:ResetWorldAnchor()
-    else
-        c.status = status
     end
-    local show = valid(found)
-    c.widget:SetButtonVisible(show)
-    local projected = false
-    if show then
-        c.widget.WBP_Interact_Left:Configure(c.widget, label(c))
-        projected = c.widget:SetWorldAnchor(c.pc, anchorOf(found))
+    local projected = valid(target) and c.widget:SetWorldAnchor(c.pc, anchorOf(target))
+    if not projected then release(c) end
+    c.canPress = projected and not hold and status.Available == true
+    c.widget:SetButtonVisible(projected == true)
+    local progress
+    if projected and holding then
+        local elapsed = KismetSystemLibrary.GetGameTimeInSeconds(c.pc) - hold.pressedAt
+        progress = math.min(elapsed / hold.duration, 1)
     end
+    local button = c.widget.WBP_Interact_Left
+    button:SetProgress(progress or 0)
+    button:SetProgressVisible(progress ~= nil)
     c.widget:SetVisibility(projected and ESlateVisibility.SelfHitTestInvisible or ESlateVisibility.Collapsed)
-end
-function M.Result(sequence, ok, reason)
-    local c = current
-    if not c or c.pending ~= sequence then return end
-    c.pending = nil
-    if ok then
-        c.error = nil
-        -- Confirm from the authoritative status on the next tick rather than
-        -- flipping a local flag that a lost update would leave wrong forever.
-        M.Update()
-    else
-        c.installing = false
-        c.error = tostring(reason)
-        ugcprint('[ZombieBoard] request rejected: '..tostring(reason))
+    if progress == 1 and hold.accepted and not hold.submitted then
+        hold.submitted = true
+        UnrealNetwork.CallUnrealRPC(c.pc, c.pc, 'ServerCompleteZombieBoard', hold.point, hold.sequence)
     end
+end
+function M.Result(sequence, ok, completed)
+    local c = current
+    local hold = c and c.hold
+    if not hold or hold.sequence ~= sequence or hold.finished then return end
+    if completed or not ok then hold.finished = true else hold.accepted = true end
+    M.Update()
 end
 function M.Begin(pc)
     if pc ~= UGCGameSystem.GetLocalPlayerController() then return false end
@@ -119,23 +128,32 @@ function M.Begin(pc)
         end
         if not valid(widget) then ugcprint('[ZombieBoard] widget unavailable'); return end
         c.widget = widget
-        widget:HideProgressVisuals()
         widget:SetVisibility(ESlateVisibility.Collapsed)
         widget:AddToViewport(20)
+        widget:HideProgressVisuals()
+        widget.WBP_Interact_Left:Configure(widget, '长按安装木板')
         widget:SetRequestHandler(function()
-            if current ~= c or c.pending or not valid(c.target) then return end
-            local sequence = (c.pc.ZombieBoardClientSequence or 0) + 1
-            c.pc.ZombieBoardClientSequence = sequence
-            c.pending = sequence
-            if c.installing then
-                -- Cancel carries only the sequence: the server owns which window
-                -- this player occupies, so no client-chosen point can retract
-                -- somebody else's board.
-                UnrealNetwork.CallUnrealRPC(pc, pc, 'ServerCancelZombieBoard', sequence)
+            if current ~= c or c.hold then return end
+            M.Update()
+            if not c.canPress then return end
+            local point, sequence = c.target, nextSequence(pc)
+            c.hold = {point = point, pawn = UGCGameSystem.GetLocalPlayerPawn(), sequence = sequence,
+                duration = point.InstallSeconds,
+                pressedAt = KismetSystemLibrary.GetGameTimeInSeconds(pc)}
+            UnrealNetwork.CallUnrealRPC(pc, pc, 'ServerRequestZombieBoard', point, sequence)
+            M.Update()
+        end, function()
+            if current ~= c then return end
+            M.Update()
+            local hold = c.hold
+            if hold and not hold.finished
+                and KismetSystemLibrary.GetGameTimeInSeconds(pc) - hold.pressedAt >= hold.duration then
+                hold.released = true
             else
-                UnrealNetwork.CallUnrealRPC(pc, pc, 'ServerRequestZombieBoard', c.target, sequence)
+                release(c)
             end
-        end, function() end)
+            M.Update()
+        end)
         c.timer = UGCTimerUtility.CreateLuaTimer(M.Config.DetectInterval, M.Update, true)
         M.Update()
     end)
@@ -145,6 +163,7 @@ function M.End(pc)
     local c = current
     if not c or (pc and pc ~= c.pc) then return end
     current = nil
+    release(c)
     clear(c)
     if c.timer then UGCTimerUtility.RemoveLuaTimer(c.timer) end
     if valid(c.widget) then UGCWidgetUtility.DestroyWidget(c.widget) end

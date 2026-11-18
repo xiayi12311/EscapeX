@@ -84,7 +84,7 @@ function M.Start(gm, point, instanceId, count)
                 and snapshot.AliveCount==0 and not snapshot.Error and not snapshot.AdapterError
         end
         if snapshot and not err then err = snapshot.Error or snapshot.AdapterError end
-        publish(point,snapshot,err or (not snapshot and 'MISSING_SNAPSHOT' or nil),UGCGameSystem.GetServerTimeSec())
+        publish(point,snapshot,err or (not snapshot and 'MISSING_SNAPSHOT' or nil),KismetSystemLibrary.GetGameTimeInSeconds(gm))
         if err or not snapshot or snapshot.State == 'Succeeded' or snapshot.State == 'Failed' then
             UGCTimerUtility.RemoveLuaTimer(run.Timer)
             owners[gm][encounter] = nil
@@ -92,7 +92,7 @@ function M.Start(gm, point, instanceId, count)
     end
     run.Tick = tick
     run.Timer = UGCTimerUtility.CreateLuaTimer(M.Config.TickSeconds,tick,true)
-    publish(point,gm.ZombieDefenseService:Snapshot(encounter),nil,UGCGameSystem.GetServerTimeSec())
+    publish(point,gm.ZombieDefenseService:Snapshot(encounter),nil,KismetSystemLibrary.GetGameTimeInSeconds(gm))
     return true
 end
 -- Submit failure outside the timer/map gate: a resolved team must settle even when
@@ -105,7 +105,7 @@ local function fail(gm,encounter)
     if not before or before.State=='Succeeded' or before.State=='Failed' then return end
     local snapshot, err=gm:StepZombieDefense(encounter,true)
     if run then
-        publish(run.Point,snapshot,err,UGCGameSystem.GetServerTimeSec())
+        publish(run.Point,snapshot,err,KismetSystemLibrary.GetGameTimeInSeconds(gm))
         UGCTimerUtility.RemoveLuaTimer(run.Timer)
         owners[gm][encounter]=nil
     end
