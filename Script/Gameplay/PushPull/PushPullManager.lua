@@ -158,7 +158,7 @@ function M.FacingMatches(crate, playerForward, faceIndex, maxAngle)
     local mag = math.sqrt(fx * fx + fy * fy)
     if mag <= 0.0001 then return false end
     fx, fy = fx / mag, fy / mag
-    local desiredX, desiredY = -f.normalX, -f.normalY
+    local desiredX, desiredY = localToWorld(-f.normalX, -f.normalY, crate.Yaw)
     local threshold = math.cos((maxAngle or 60) * math.pi / 180)
     return fx * desiredX + fy * desiredY >= threshold
 end
