@@ -1,6 +1,7 @@
 -- Placeholder content/text: replace resources before production acceptance.
 local Config = {
     FixedSearchOutcomes = {[5]='NoteEvent_05', [10]='NoteEvent_10', [12]='LibraryKey'},
+    SearchCountCheckpoints = {5, 10},
     -- Functional count triggers, dispatched by DeskSearchService when an opened
     -- search reaches the count. Outcome rendering stays in FixedSearchOutcomes.
     CountTriggers = {[7]='EnableSecondRoute', [12]='RemoveClassAirWalls'},

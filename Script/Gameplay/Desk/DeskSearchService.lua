@@ -109,21 +109,28 @@ local function removeTaggedActors(gm, config)
         return 0
     end
     local actors=UGCActorComponentUtility.GetAllActorsWithTag(gm,config.Tag) or {}
-    local matched,removed=0,0
+    local state=UGCGameSystem.GetGameState()
+    if not valid(state) then
+        log('ERROR: GameState unavailable for classroom wall removal')
+        return 0
+    end
+    if state.ClassAirWallsRemoved then return 0 end
+
+    local targets={}
     for _,actor in pairs(actors) do
-        matched=matched+1
-        if valid(actor) then
-            actor:K2_DestroyActor()
-            removed=removed+1
-        end
+        if valid(actor) then targets[#targets+1]=actor end
     end
-    if config.ExpectedCount and matched~=config.ExpectedCount then
-        log(string.format('WARNING: tagged actor removal tag=%s expected=%d matched=%d',
-            config.Tag,config.ExpectedCount,matched))
+    if #targets~=config.ExpectedCount then
+        log(string.format('ERROR: classroom wall removal tag=%s expected=%d matched=%d',
+            config.Tag,config.ExpectedCount,#targets))
+        return 0
     end
+
+    state.ClassAirWallsRemoved=true
+    for _,actor in ipairs(targets) do actor:K2_DestroyActor() end
     log(string.format('Removed tagged actors tag=%s matched=%d removed=%d',
-        config.Tag,matched,removed))
-    return removed
+        config.Tag,#targets,#targets))
+    return #targets
 end
 
 function Service.Get(gm)
@@ -231,8 +238,9 @@ end
 function Service.ResetOpenedCount(gm)
     local m,reason=Service.Get(gm)
     if not m then return false,reason or 'SERVICE_NOT_READY' end
+    local previous=m:GetOpenedCount()
     local ok=m:ResetOpenedCount()
-    log('Count reset epoch='..m.CounterEpoch)
+    log(string.format('Count reset from=%d to=%d epoch=%d',previous,m:GetOpenedCount(),m.CounterEpoch))
     return ok
 end
 

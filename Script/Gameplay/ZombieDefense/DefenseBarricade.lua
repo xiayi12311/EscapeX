@@ -15,12 +15,17 @@ end
 local function windowConfig(config)
     assert(type(config) == 'table', 'INVALID_BARRICADE_CONFIG')
     positive(config.BoardsPerWindow, 'INVALID_BOARD_COUNT', true)
+    local preinstalled = config.PreinstalledBoards
+    if preinstalled == nil then preinstalled = 0 end
+    assert(type(preinstalled) == 'number' and preinstalled >= 0
+        and preinstalled <= config.BoardsPerWindow and preinstalled % 1 == 0,
+        'INVALID_PREINSTALLED_BOARDS')
     positive(config.BoardDurability, 'INVALID_BOARD_DURABILITY')
     positive(config.InstallSeconds, 'INVALID_INSTALL_SECONDS')
     positive(config.InstallRange, 'INVALID_INSTALL_RANGE')
     positive(config.ClimbCapacity, 'INVALID_CLIMB_CAPACITY', true)
     return {BoardsPerWindow = config.BoardsPerWindow,
-        BoardDurability = config.BoardDurability,
+        BoardDurability = config.BoardDurability, PreinstalledBoards = preinstalled,
         InstallSeconds = config.InstallSeconds,
         InstallRange = config.InstallRange,
         ClimbCapacity = config.ClimbCapacity}
@@ -37,6 +42,10 @@ function Barricade.New(windows)
         assert(not byId[pointId], 'DUPLICATE_WINDOW_ID: ' .. pointId)
         local window = {PointId = pointId, Actor = entry.Actor,
             Config = windowConfig(entry.Config), Boards = {}, VisualSlots = {}, Installer = nil, Climbers = {}}
+        for slot = 1, window.Config.PreinstalledBoards do
+            window.Boards[slot] = window.Config.BoardDurability
+            window.VisualSlots[slot] = slot
+        end
         byId[pointId] = window
         list[#list + 1] = window
     end
@@ -148,7 +157,7 @@ local function nextVisualSlot(window)
     end
 end
 
-function Barricade:CompleteInstall(pointId, playerKey)
+function Barricade:CompleteInstall(pointId, playerKey, consume)
     local window, reason = self:_window(pointId)
     if not window then return false, reason end
     if window.Installer == nil or window.Installer ~= playerKey then return false, 'NOT_INSTALLING' end
@@ -156,6 +165,7 @@ function Barricade:CompleteInstall(pointId, playerKey)
     if #window.Climbers > 0 then return false, 'CLIMB_IN_PROGRESS' end
     if #window.Boards >= window.Config.BoardsPerWindow then return false, 'WINDOW_FULL' end
     local slot = assert(nextVisualSlot(window), 'NO_FREE_BOARD_VISUAL_SLOT')
+    if consume and not consume() then return false, 'BOARD_ITEM_REQUIRED' end
     window.Boards[#window.Boards + 1] = window.Config.BoardDurability
     window.VisualSlots[#window.VisualSlots + 1] = slot
     return true, #window.Boards

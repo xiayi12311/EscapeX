@@ -148,9 +148,23 @@ function Manager:GetSnapshot(id)
     if d then return snapshot(d) end
 end
 
-function Manager:ResetOpenedCount()
-    self.TotalOpenedCount=0; self.CounterEpoch=self.CounterEpoch+1
+function Manager:SetOpenedCount(count)
+    if type(count) ~= 'number' or count < 0 or count > 2147483646 or count ~= math.floor(count) then
+        return false
+    end
+    self.TotalOpenedCount = count
+    self.CounterEpoch = self.CounterEpoch + 1
     return true
+end
+
+function Manager:ResetOpenedCount()
+    local checkpoint=0
+    for _,count in ipairs(self.config.SearchCountCheckpoints or {}) do
+        if count<=self.TotalOpenedCount and count>checkpoint then
+            checkpoint=count
+        end
+    end
+    return self:SetOpenedCount(checkpoint)
 end
 
 function Manager:ResetDesk(actor)

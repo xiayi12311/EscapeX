@@ -3,10 +3,12 @@ local Config = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseCo
 local targeting = {RepathSeconds = 0.6, WindowStopRadius = 5}
 return {
     Modes = {Prototype = Config},
+    BoardItemId = 8310006,
     SpawnGroups = {Default = {}},
     Enemies = {NormalZombie = {
         ClassPath = 'Asset/Blueprint/Prefabs/Monsters/NormalZombie.NormalZombie_C',
         DeathEvent = 'NormalZombie.BPDie',
+        BoardDropChance = 0.25,
         Placement = {SearchRadius=400,Rings=3,SamplesPerRing=8,Radius=34,HalfHeight=88,
             Spacing=10,GroundClearance=3,QueryExtent={X=40,Y=40,Z=200},ObjectTypes={0,1,2,3,4,7,12}},
     }},

@@ -36,6 +36,7 @@
 ---@field QueryHalfDepth float
 ---@field QueryHalfWidth float
 ---@field QueryHalfHeight float
+---@field PreinstalledBoards int32
 --Edit Below--
 ---@type BP_ZS_WindowPoint_C
 local Point = {DefenseBoardSlots = '', DefenseBoardInteractionState = {Available = false}}

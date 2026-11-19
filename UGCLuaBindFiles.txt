@@ -55,6 +55,8 @@ Script/Gameplay/Capture/CaptureManager.lua
 Script/Gameplay/Capture/CapturePresentation.lua
 Script/Gameplay/Capture/CaptureService.lua
 Script/Gameplay/Capture/StrugglePresentation.lua
+Script/Gameplay/Debug/GMFlight.lua
+Script/Gameplay/Debug/GMPlayerState.lua
 Script/Gameplay/Desk/DeskOutcomeConfig.lua
 Script/Gameplay/Desk/DeskPresentation.lua
 Script/Gameplay/Desk/DeskSearchManager.lua
@@ -112,6 +114,7 @@ Script/UI/Hospital/WBP_HospitalShopPermanent.lua
 Script/UI/Hospital/WBP_HospitalShopRandom.lua
 Script/UI/WBP_BlackBoard.lua
 Script/UI/ZombieSurvival/WBP_ZS_StatusHUD.lua
+Script/utils/gm.lua
 Script/utils/HospitalShopDelivery.lua
 Script/utils/HospitalShopRandom.lua
 Script/utils/HospitalShopService.lua

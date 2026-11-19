@@ -57,7 +57,7 @@ function M.Receive(pc, state)
     end
     local view = current
     if not view or view.Controller ~= pc or not valid(view.Widget) then return end
-    view.Widget:OnFundsChanged(state.Funds)
+    view.Widget:OnFundsChanged(state.InfiniteFunds and '∞' or state.Funds)
     local page = view.Widget.ActivePage
     if page then
         page:OnShopStateUpdate(state)

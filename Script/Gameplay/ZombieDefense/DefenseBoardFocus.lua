@@ -1,5 +1,6 @@
 local UI = UGCGameSystem.UGCRequire('Script.Gameplay.PushPull.PushPullConfig').Interaction
 local World = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWorldPoints')
+local Catalog = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseCatalog')
 local M = {}
 M.Config = {DetectInterval = UI.DetectInterval, TraceReach = 350}
 local current
@@ -82,7 +83,9 @@ function M.Update()
         c.hold, hold = nil, nil
     end
     local holding = hold and not hold.finished
-    local target = status and (status.Available or holding) and found or nil
+    local canInstall = status and status.Available
+        and UGCBackPackSystem.GetItemCount(pawn, Catalog.BoardItemId) > 0
+    local target = (holding or canInstall) and found or nil
     if target ~= c.target then
         clear(c)
         c.target = target
@@ -91,7 +94,7 @@ function M.Update()
     end
     local projected = valid(target) and c.widget:SetWorldAnchor(c.pc, anchorOf(target))
     if not projected then release(c) end
-    c.canPress = projected and not hold and status.Available == true
+    c.canPress = projected and not hold and canInstall
     c.widget:SetButtonVisible(projected == true)
     local progress
     if projected and holding then

@@ -197,6 +197,7 @@ function HospitalShopService.SendState(PC)
     end
     PC.HospitalShopRevision = (PC.HospitalShopRevision or 0) + 1
     local Snapshot = {
+        InfiniteFunds = Manager ~= nil and Manager.Pawn.EscapeXGMUnlimitedShop == true,
         RoundID = Manager and Manager.HospitalShopRoundID or "",
         GameDay = Manager and math.max(1, math.floor(Manager.Day or 0)) or 1,
         Revision = PC.HospitalShopRevision,
@@ -231,9 +232,11 @@ local function ExecutePurchase(PC, Manager, ID, RoundID, Day, OfferVersion)
         if not RandomShop.Contains(Daily.IDs, ID) then return "该商品不在当前特供中" end
     end
     local Bought = Counts[ID] or 0
-    if Data.MaxCommodityCount > 0 and Bought >= Data.MaxCommodityCount then return "该商品已售罄" end
+    local Unlimited = Manager.Pawn.EscapeXGMUnlimitedShop == true
+    if not Unlimited and Data.MaxCommodityCount > 0 and Bought >= Data.MaxCommodityCount then return "该商品已售罄" end
+    local Cost = Unlimited and 0 or Data.Price
     local Record = PC.HospitalShopPlayerRecord
-    if Record.Funds < Data.Price then return "资金不足" end
+    if Record.Funds < Cost then return "资金不足" end
 
     local Valid, Plan = pcall(function() return Data.DeliveryPlan or Delivery.BuildPlan(Data, Context.Packages) end)
     if not Valid then
@@ -241,24 +244,24 @@ local function ExecutePurchase(PC, Manager, ID, RoundID, Day, OfferVersion)
         return "商品发货配置无效，请检查物品类型与发货表"
     end
     local Before = Delivery.Snapshot(Manager.Pawn, Plan)
-    local Transaction = { CommodityID = ID, Price = Data.Price, RequestID = PC.HospitalShopLastRequestID,
+    local Transaction = { CommodityID = ID, Price = Cost, RequestID = PC.HospitalShopLastRequestID,
         DeliveryPlan = Delivery.Copy(Plan), Before = Before }
-    Record.Funds = Record.Funds - Data.Price
+    Record.Funds = Record.Funds - Cost
     SetTransactionFault(PC, Transaction)
     local AddedOK, Added = pcall(Delivery.Give, Manager.Pawn, Plan)
     if AddedOK then
-        Counts[ID] = Bought + 1
+        if not Unlimited then Counts[ID] = Bought + 1 end
         local Lock = PC.HospitalShopPlayerRecord.RandomLock
         if Lock and Lock.Data.CommodityID == ID then PC.HospitalShopPlayerRecord.RandomLock = nil end
         SetTransactionFault(PC, nil)
         ugcprint(string.format("[HospitalShop] bought id=%d request=%d round=%s cost=%d count=%d",
-            ID, PC.HospitalShopLastRequestID, RoundID, Data.Price, Bought + 1))
+            ID, PC.HospitalShopLastRequestID, RoundID, Cost, Counts[ID] or 0))
         return "购买成功：" .. tostring(Data.Name), true
     end
 
     local Restored, Error = pcall(Delivery.Rollback, Manager.Pawn, Before)
     if Restored then
-        Record.Funds = Record.Funds + Data.Price
+        Record.Funds = Record.Funds + Cost
         SetTransactionFault(PC, nil)
         ugcprint("[HospitalShop] delivery failed and refunded id=" .. tostring(ID) .. " result=" .. tostring(Added))
         return "物品未完整发放，已退款，请检查背包空间或商品配置"
@@ -316,22 +319,24 @@ function HospitalShopService.Refresh(PC, RequestID, RoundID, Day, OfferVersion)
         if PC.HospitalShopTransactionFault then return "发货状态异常，请检查服务器日志" end
         local Daily, Pool, Context = EnsureDaily(PC, Manager)
         if Day ~= Daily.Day or OfferVersion ~= Daily.OfferVersion then return "特供商品已更新，请重试" end
-        if RandomShop.RefreshLimit > 0 and Daily.RefreshUsed >= RandomShop.RefreshLimit then return "本波刷新次数已用完" end
+        local Unlimited = Manager.Pawn.EscapeXGMUnlimitedShop == true
+        if not Unlimited and RandomShop.RefreshLimit > 0 and Daily.RefreshUsed >= RandomShop.RefreshLimit then return "本波刷新次数已用完" end
         local Lock = PC.HospitalShopPlayerRecord.RandomLock
         if not RandomShop.CanReplace(Pool, Daily.IDs, Lock and Lock.Data.CommodityID) then return "暂无可替换的特供商品" end
         local Record = PC.HospitalShopPlayerRecord
-        if Record.Funds < RandomShop.RefreshCost then return "资金不足" end
+        local Cost = Unlimited and 0 or RandomShop.RefreshCost
+        if Record.Funds < Cost then return "资金不足" end
         local IDs, Offers = BuildOffers(PC.HospitalShopPlayerRecord, Pool, Daily.IDs, Context)
         if RandomShop.SameSet(IDs, Daily.IDs) then return "暂无可替换的特供商品" end
-        Record.Funds = Record.Funds - RandomShop.RefreshCost
-        SetTransactionFault(PC, { Action = "Refresh", Price = RandomShop.RefreshCost, RequestID = RequestID })
+        Record.Funds = Record.Funds - Cost
+        SetTransactionFault(PC, { Action = "Refresh", Price = Cost, RequestID = RequestID })
         Daily.IDs = IDs
         Daily.Offers = Offers
-        Daily.RefreshUsed = Daily.RefreshUsed + 1
+        if not Unlimited then Daily.RefreshUsed = Daily.RefreshUsed + 1 end
         PC.HospitalShopPlayerRecord.RandomOfferSerial = PC.HospitalShopPlayerRecord.RandomOfferSerial + 1
         Daily.OfferVersion = PC.HospitalShopPlayerRecord.RandomOfferSerial
         SetTransactionFault(PC, nil)
-        ugcprint(string.format("[HospitalShop] refresh day=%d used=%d cost=%d", Daily.Day, Daily.RefreshUsed, RandomShop.RefreshCost))
+        ugcprint(string.format("[HospitalShop] refresh day=%d used=%d cost=%d", Daily.Day, Daily.RefreshUsed, Cost))
         return "特供商品已刷新"
     end)
 end
@@ -352,7 +357,8 @@ function HospitalShopService.Lock(PC, ID, RequestID, RoundID, Day, OfferVersion)
         else
             if Record.RandomLock then return "最多锁定一件商品，请先解锁" end
             local Data = Daily.Offers[Slot]
-            if Data.MaxCommodityCount > 0 and (Record.BoughtCounts[ID] or 0) >= Data.MaxCommodityCount then return "已售罄商品不能锁定" end
+            if not Manager.Pawn.EscapeXGMUnlimitedShop and Data.MaxCommodityCount > 0
+            and (Record.BoughtCounts[ID] or 0) >= Data.MaxCommodityCount then return "已售罄商品不能锁定" end
             Record.RandomLock = { Slot = Slot, Data = Delivery.Copy(Data) }
         end
         Record.RandomOfferSerial = Record.RandomOfferSerial + 1

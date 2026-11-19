@@ -232,7 +232,13 @@ function Adapter.Prepare(context, points, catalog)
             end
             placement=copy
         end
-        plans[#plans + 1] = {Point = point, Class = class, Placement = placement}
+        local dropChance = enemy.BoardDropChance
+        if dropChance ~= nil and (type(dropChance) ~= 'number' or dropChance ~= dropChance
+            or dropChance < 0 or dropChance > 1 or not catalog.BoardItemId) then
+            return nil, 'INVALID_BOARD_DROP_CONFIG: ' .. point.EnemyConfigId
+        end
+        plans[#plans + 1] = {Point = point, Class = class, Placement = placement,
+            BoardDropChance = dropChance, BoardItemId = catalog.BoardItemId}
     end
     return plans
 end
@@ -257,7 +263,8 @@ function Adapter.Spawn(context, plan, onDeath)
         return nil, 'ENGINE_SPAWN_FAILED'
     end
     if bindings[actor] then return nil, 'ENEMY_ALREADY_BOUND' end
-    bindings[actor] = {Context = context, OnDeath = onDeath, Placement = plan.Placement}
+    bindings[actor] = {Context = context, OnDeath = onDeath, Placement = plan.Placement,
+        BoardDropChance = plan.BoardDropChance, BoardItemId = plan.BoardItemId}
     return actor
 end
 
@@ -270,6 +277,14 @@ function Adapter.NotifyDeath(actor)
         return false, 'WORLD_CONTEXT_ENDED'
     end
     binding.OnDeath(actor)
+    local chance = binding.BoardDropChance
+    if chance and chance > 0 and math.random() < chance then
+        local at = actor:K2_GetActorLocation()
+        local pickup = UGCItemSystemV2.SpawnPickupWrapper(at, binding.BoardItemId, 1)
+        if not KismetSystemLibrary.IsValid(pickup) then
+            ugcprint('[ZombieDefense] Failed to spawn board pickup: ' .. tostring(binding.BoardItemId))
+        end
+    end
     return true
 end
 
@@ -309,7 +324,8 @@ function Adapter.InstallEligible(context, playerKey, actor, range)
         or actor:K2_GetActorLocation()
     local at = pawn:K2_GetActorLocation()
     if not (anchor and at) then return false end
-    return (anchor.X-at.X)^2 + (anchor.Y-at.Y)^2 + (anchor.Z-at.Z)^2 <= range^2
+    if (anchor.X-at.X)^2 + (anchor.Y-at.Y)^2 + (anchor.Z-at.Z)^2 > range^2 then return false end
+    return pawn
 end
 
 -- Match the window interaction's WorldStatic and WorldDynamic object filter.
@@ -371,6 +387,8 @@ function Adapter.PrepareTargeting(windows, config, queueConfig)
         WindowStopRadius = config.WindowStopRadius, Queues = queues}
 end
 
+local GMState = UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMPlayerState')
+
 local function livingPlayers()
     local players, keys = {}, {}
     for _, controller in pairs(UGCGameSystem.GetAllPlayerController(false)) do
@@ -378,7 +396,7 @@ local function livingPlayers()
             local key = UGCGameSystem.GetPlayerKeyByPlayerController(controller)
             if type(key) == 'number' and key >= 0 and UGCPlayerStateSystem.IsAlive(key) then
                 local pawn = UGCGameSystem.GetPlayerPawnByPlayerKey(key)
-                if KismetSystemLibrary.IsValid(pawn) then
+                if KismetSystemLibrary.IsValid(pawn) and not GMState.IsInvisible(pawn) then
                     players[key] = pawn
                     keys[#keys + 1] = key
                 end

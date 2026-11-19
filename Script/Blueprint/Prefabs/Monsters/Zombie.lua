@@ -3,9 +3,13 @@
 --Edit Below--
 local Zombie = {}
 
--- function Zombie:ReceiveBeginPlay()
---     Zombie.SuperClass.ReceiveBeginPlay(self)
--- end
+function Zombie:ReceiveBeginPlay()
+    Zombie.SuperClass.ReceiveBeginPlay(self)
+    if self:HasAuthority() then
+        local GMState = UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMPlayerState')
+        GMState.ConfigureZombieTargeting(self)
+    end
+end
 
 -- function Zombie:ReceiveTick(DeltaTime)
 --     Zombie.SuperClass.ReceiveTick(self, DeltaTime)

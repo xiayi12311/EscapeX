@@ -5,6 +5,7 @@ local Manager = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureManager
 local Config = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CaptureConfig')
 local HT = UGCGameSystem.UGCRequire('Script.AI.HeadTeacher.HTCommon')
 local Presentation = UGCGameSystem.UGCRequire('Script.Gameplay.Capture.CapturePresentation')
+local GMState = UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMPlayerState')
 local Service = {}
 
 local LOG = '[HTCapture]'
@@ -121,7 +122,8 @@ end
 
 local function setInvincible(pawn, on)
     if not valid(pawn) then return end
-    pcall(function() return UGCPlayerPawnSystem.SetIsInvincible(pawn, on) end)
+    local ok, applied = pcall(GMState.SetCaptureInvincible, pawn, on)
+    if not ok or not applied then log('Could not change capture invincibility: '..tostring(applied)) end
 end
 
 -- The UGCPlayerPawnSystem wrapper leaves native optional arguments unset in this
@@ -570,6 +572,7 @@ function Service.StartCapture(gm, monster, target)
     local m, reason = Service.GetManager(gm)
     if not m then return false, reason or 'SERVICE_NOT_READY' end
     if not (valid(monster) and valid(target)) then return false, 'INVALID_ACTOR' end
+    if GMState.IsInvisible(target) then return false, 'GM_INVISIBLE' end
     local key = UGCGameSystem.GetPlayerKeyByPlayerPawn(target)
     if key == nil or key < 0 then return false, 'INVALID_PLAYER_KEY' end
     local socket = HT.config(monster, 'HTCarrySocket')

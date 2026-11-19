@@ -7,6 +7,7 @@
 ---@field MaxAlphaIntensity float
 --Edit Below--
 local AirWall = {}
+local DeskOutcomeConfig = UGCGameSystem.UGCRequire('Script.Gameplay.Desk.DeskOutcomeConfig')
 
 local Config = {
     UpdateInterval = 0.05,
@@ -72,8 +73,25 @@ function AirWall:UpdateFade()
     setOpacity(self, (self.CurrentOpacity or 0) + (target - (self.CurrentOpacity or 0)) * blend)
 end
 
+function AirWall:ApplyClassAirWallRemoval()
+    self:SetActorEnableCollision(false)
+    self:SetActorHiddenInGame(true)
+    if self.AirWallFadeTimer then
+        UGCTimerUtility.RemoveLuaTimer(self.AirWallFadeTimer)
+        self.AirWallFadeTimer = nil
+    end
+end
+
 function AirWall:ReceiveBeginPlay()
     AirWall.SuperClass.ReceiveBeginPlay(self)
+    local tag = DeskOutcomeConfig.TaggedActorRemovals.RemoveClassAirWalls.Tag
+    if not self:HasAuthority() and self:ActorHasTag(tag) then
+        local state = UGCGameSystem.GetGameState()
+        if valid(state) and state.ClassAirWallsRemoved then
+            self:ApplyClassAirWallRemoval()
+            return
+        end
+    end
     self.CurrentOpacity = 0
 
     if not valid(self.AirWallVisual) then

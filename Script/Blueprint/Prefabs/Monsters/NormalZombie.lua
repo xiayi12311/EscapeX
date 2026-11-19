@@ -3,9 +3,13 @@
 ---@type NormalZombie_C
 local NormalZombie = {}
 
--- function NormalZombie:ReceiveBeginPlay()
---     NormalZombie.SuperClass.ReceiveBeginPlay(self)
--- end
+function NormalZombie:ReceiveBeginPlay()
+    NormalZombie.SuperClass.ReceiveBeginPlay(self)
+    if self:HasAuthority() then
+        local GMState = UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMPlayerState')
+        GMState.ConfigureZombieTargeting(self)
+    end
+end
 
 -- function NormalZombie:ReceiveTick(DeltaTime)
 --     NormalZombie.SuperClass.ReceiveTick(self, DeltaTime)

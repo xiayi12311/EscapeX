@@ -54,10 +54,11 @@ function WBP_CommodityIntro:RefreshPurchaseState(State)
     local Data = self.CommodityData or {}
     local Price = tonumber(Data.Price)
     local Funds = tonumber(State.Funds)
-    self:GetWidgetFromName("Text_Balance"):SetText(Funds and Price and Funds >= Price and ("$" .. tostring(Funds - Price)) or "$ --")
+    self:GetWidgetFromName("Text_Balance"):SetText(State.InfiniteFunds and "无限" or (Funds and Price and Funds >= Price and ("$" .. tostring(Funds - Price)) or "$ --"))
     local Remaining = tonumber(State.RemainingPurchases)
     local Limit = tonumber(Data.PurchaseLimit)
     local LimitText = Limit and Limit > 0 and ("整局限购 " .. tostring(Limit) .. " 次") or "不限购"
+    if State.InfiniteFunds then LimitText = "GM 不限购" end
     if not self.CommodityData then LimitText = "" end
     self:GetWidgetFromName("Text_Remaining"):SetText(Remaining and ("整局余 " .. tostring(math.max(0, Remaining)) .. " 次") or LimitText)
     local SoldOut = State.bSoldOut == true or (Remaining ~= nil and Remaining <= 0)
@@ -67,6 +68,7 @@ function WBP_CommodityIntro:RefreshPurchaseState(State)
         elseif SoldOut then Label = "已售罄"
         elseif not State.bReady then Label = State.UnavailableText or "同步中…"
         elseif not State.bConfigValid then Label = "商品配置无效"
+        elseif State.InfiniteFunds then Label, Enabled = "购买 · GM 免费", true
         elseif Funds == nil then Label = "资金同步中…"
         elseif Price == nil or Funds < Price then Label = "资金不足"
         else Label, Enabled = "购买 · $" .. tostring(Price), true end

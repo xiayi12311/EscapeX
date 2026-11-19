@@ -25,10 +25,11 @@ local function startBoardInstalls(gameMode)
         ugcprint('[ZombieDefense] Window setup failed: ' .. Board.ErrorText(reason))
         return
     end
-    if not next(service.Barricades) then return end
+    if not next(service.Barricades) then return true end
     gameMode.ZombieBoardTimer = UGCTimerUtility.CreateLuaTimer(service.Catalog.BoardInstallCheckSeconds, function()
         service:TickBoardInstalls()
     end, true)
+    return true
 end
 
 function UGCGameMode:ReceiveBeginPlay()
@@ -96,8 +97,8 @@ function UGCGameMode:ResetAllDesks()
     return DeskSearch.ResetAllDesks(self)
 end
 
--- A confirmed grab starts a fresh desk-search round for every player. Reset desks
--- first so all active searches and delayed reveals are invalidated before count 0.
+-- A confirmed grab resets desks for everyone and restores the last count checkpoint.
+-- Reset desks first to invalidate active searches and delayed reveals.
 function UGCGameMode:OnPlayerCaptured(PlayerKey, CaptureSessionId)
     assert(self:HasAuthority(), 'capture round reset is server-only')
     PushPull.CancelPlayer(self, PlayerKey, 'PLAYER_BUSY')
@@ -172,7 +173,14 @@ function UGCGameMode:RequestZombieDefenseRevive(EncounterId,PlayerKey)
     return Team.RequestRevive(self,EncounterId,PlayerKey)
 end
 
-function UGCGameMode:ShutdownZombieDefense()
+function UGCGameMode:ResetZombieDefenseForGM()
+    assert(self:HasAuthority(), 'DEFENSE_SERVER_ONLY')
+    self:ShutdownZombieDefense(true)
+    if not startBoardInstalls(self) then return false, 'BOARD_PREPARATION_FAILED' end
+    return true
+end
+
+function UGCGameMode:ShutdownZombieDefense(resetForGM)
     if self.ZombieBoardTimer then
         UGCTimerUtility.RemoveLuaTimer(self.ZombieBoardTimer)
         self.ZombieBoardTimer = nil
@@ -182,7 +190,7 @@ function UGCGameMode:ShutdownZombieDefense()
     local Team=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTeamPolicy')
     Team.Shutdown(self)
     if self.ZombieDefenseService then
-        self.ZombieDefenseService:Shutdown()
+        self.ZombieDefenseService:Shutdown(resetForGM)
         self.ZombieDefenseService = nil
     end
 end

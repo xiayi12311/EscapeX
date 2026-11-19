@@ -1,4 +1,5 @@
-local UGCPlayerPawn = {}
+local Flight = UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMFlight')
+local UGCPlayerPawn = {EscapeXGMFlight = false}
 
 function UGCPlayerPawn:ReceiveBeginPlay()
     self.bVaultIsOpen = true
@@ -9,6 +10,10 @@ function UGCPlayerPawn:ReceiveBeginPlay()
 end
 
 function UGCPlayerPawn:ReceiveEndPlay(Reason)
+    Flight.StopInput(self)
+    if self.EscapeXGMAmmoTimer then
+        UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMInventory').StopAmmo(self)
+    end
     local Loadout = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseTestLoadout')
     Loadout.Cancel(self)
     UGCPlayerPawn.SuperClass.ReceiveEndPlay(self, Reason)
@@ -33,7 +38,11 @@ end
 --]]
 
 function UGCPlayerPawn:GetReplicatedProperties()
-    return {"__SubObjectRepList", "Lazy"}
+    return {"__SubObjectRepList", "Lazy"}, 'EscapeXGMFlight'
+end
+
+function UGCPlayerPawn:OnRep_EscapeXGMFlight()
+    Flight.Apply(self, self.EscapeXGMFlight)
 end
 
 

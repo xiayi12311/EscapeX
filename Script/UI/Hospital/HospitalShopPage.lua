@@ -133,7 +133,8 @@ function WBP_HospitalShop:GetPurchaseState(Data)
     end
     local Limit = Data and Data.PurchaseLimit or 0
     local Bought = Ready and Data and (Counts[tostring(Data.CommodityID)] or 0) or 0
-    local Remaining = Ready and Limit > 0 and math.max(0, Limit - Bought) or nil
+    local Unlimited = Ready and Snapshot.InfiniteFunds == true
+    local Remaining = Ready and not Unlimited and Limit > 0 and math.max(0, Limit - Bought) or nil
     local Price = Data and Data.Price
     local ItemID = Data and tonumber(Data.ItemID)
     local ItemNum = Data and tonumber(Data.ItemNum)
@@ -142,6 +143,7 @@ function WBP_HospitalShop:GetPurchaseState(Data)
         and ItemNum ~= nil and ItemNum > 0 and ItemNum == math.floor(ItemNum)
     return {
         Funds = self.DisplayFunds,
+        InfiniteFunds = Unlimited,
         RemainingPurchases = Remaining,
         bSoldOut = Remaining ~= nil and Remaining <= 0,
         bPending = PC ~= nil and PC.HospitalShopPendingPurchase ~= nil,
@@ -163,15 +165,16 @@ function WBP_HospitalShop:RefreshRandomControls()
     local Label = "同步中…"
     local Enabled = false
     if Random and Random.Ready then
-        local Remaining = Random.RefreshLimit > 0 and math.max(0, Random.RefreshLimit - Random.RefreshUsed) or math.huge
-        local Times = Random.RefreshLimit > 0 and string.format("刷新余 %d/%d", Remaining, Random.RefreshLimit) or "刷新不限次"
+        local limited = not Snapshot.InfiniteFunds and Random.RefreshLimit > 0
+        local Remaining = limited and math.max(0, Random.RefreshLimit - Random.RefreshUsed) or math.huge
+        local Times = limited and string.format("刷新余 %d/%d", Remaining, Random.RefreshLimit) or "刷新不限次"
         self:GetWidgetFromName("Text_RandomSchedule"):SetText(string.format("第 %d 夜 · %s", Random.Day, Times))
-        Label = "刷新 · $" .. tostring(Random.RefreshCost)
+        Label = Snapshot.InfiniteFunds and "刷新 · GM 免费" or "刷新 · $" .. tostring(Random.RefreshCost)
         if PC.HospitalShopPendingPurchase then Label = "处理中…"
         elseif not Snapshot.Ready then Label = Snapshot.Fault and "交易状态异常" or "商店暂不可用"
         elseif Remaining <= 0 then Label = "本波刷新已用完"
         elseif not Random.CanReplace then Label = "暂无可替换商品"
-        elseif self.DisplayFunds == nil or self.DisplayFunds < Random.RefreshCost then Label = "刷新 $" .. tostring(Random.RefreshCost) .. " · 资金不足"
+        elseif not Snapshot.InfiniteFunds and (self.DisplayFunds == nil or self.DisplayFunds < Random.RefreshCost) then Label = "刷新 $" .. tostring(Random.RefreshCost) .. " · 资金不足"
         else Enabled = true end
     else
         self:GetWidgetFromName("Text_RandomSchedule"):SetText("每波更新 · 整局限购")
@@ -195,7 +198,8 @@ function WBP_HospitalShop:OnRefreshClicked()
     local Snapshot = PC.HospitalShopState
     local Random = Snapshot and Snapshot.RandomState
     if not Snapshot or not Snapshot.Ready or not Random or not Random.Ready or not Random.CanReplace
-        or (Random.RefreshLimit > 0 and Random.RefreshUsed >= Random.RefreshLimit) or self.DisplayFunds == nil or self.DisplayFunds < Random.RefreshCost then return end
+        or (not Snapshot.InfiniteFunds and ((Random.RefreshLimit > 0 and Random.RefreshUsed >= Random.RefreshLimit)
+            or self.DisplayFunds == nil or self.DisplayFunds < Random.RefreshCost)) then return end
     local RequestID = self:BeginShopRequest("Refresh")
     if RequestID then
         UnrealNetwork.CallUnrealRPC(PC, PC, "RPC_Server_RefreshHospitalShop", RequestID, Snapshot.RoundID, Random.Day, Random.OfferVersion)
@@ -218,7 +222,7 @@ function WBP_HospitalShop:OnBuyClicked()
     local PC = self.ShopPlayerController
     local State = self:GetPurchaseState(Data)
     if not Data or not PC or not State.bReady or not State.bConfigValid or State.bPending
-        or State.bSoldOut or State.Funds == nil or State.Funds < Data.Price then return end
+        or State.bSoldOut or (not State.InfiniteFunds and (State.Funds == nil or State.Funds < Data.Price)) then return end
     local Snapshot = PC.HospitalShopState
     local Random = Snapshot.RandomState or {}
     local RequestID = self:BeginShopRequest("Buy")

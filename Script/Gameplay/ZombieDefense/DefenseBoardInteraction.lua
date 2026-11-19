@@ -10,6 +10,7 @@ local Message = {
     NO_WINDOWS_IN_ENCOUNTER = '本防守没有可封的窗户',
     UNKNOWN_WINDOW = '未找到该窗户',
     WINDOW_FULL = '这个窗户已经封满',
+    BOARD_ITEM_REQUIRED = '背包里没有木板',
     WINDOW_BUSY = '队友正在封这个窗户',
     ALREADY_INSTALLING = '你已经在安装木板',
     CLIMB_IN_PROGRESS = '有僵尸正在翻窗',

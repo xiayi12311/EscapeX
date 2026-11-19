@@ -130,11 +130,15 @@ function Service:_barricade(encounterId)
     for _, actor in ipairs(windows) do
         entries[#entries + 1] = {PointId = actor.PointId, Actor = actor, Config = {
             BoardsPerWindow = actor.BoardsPerWindow, BoardDurability = actor.BoardDurability,
+            PreinstalledBoards = actor.PreinstalledBoards,
             InstallSeconds = actor.InstallSeconds, InstallRange = actor.InstallRange, ClimbCapacity = 1,
         }}
     end
     local ok, built = pcall(Barricade.New, entries)
     if not ok then return nil, 'INVALID_BARRICADE_CONFIG' end
+    for _, window in ipairs(built.List) do
+        publishBoardSlots(window, table.concat(window.VisualSlots, ','))
+    end
     self.Barricades[encounterId] = built
     return built
 end
@@ -363,9 +367,10 @@ function Service:InstallBoard(encounterId, pointId, playerKey, requestedActor)
     if not barricade then return false, 'NO_WINDOWS_IN_ENCOUNTER' end
     local window = barricade.ById[pointId]
     if not window or (requestedActor and requestedActor ~= window.Actor) then return false, 'UNKNOWN_WINDOW' end
-    if not Engine.InstallEligible(self.Context, playerKey, window.Actor,
-        barricade:Range(pointId)) then
-        return false, 'INSTALLER_INELIGIBLE'
+    local pawn = Engine.InstallEligible(self.Context, playerKey, window.Actor, barricade:Range(pointId))
+    if not pawn then return false, 'INSTALLER_INELIGIBLE' end
+    if UGCBackPackSystem.GetItemCount(pawn, self.Catalog.BoardItemId) < 1 then
+        return false, 'BOARD_ITEM_REQUIRED'
     end
     for _, other in pairs(self.Barricades) do
         if other ~= barricade and other.Installer[playerKey] then return false, 'ALREADY_INSTALLING' end
@@ -381,11 +386,21 @@ function Service:CompleteBoard(encounterId, pointId, playerKey, requestedActor)
     local window = barricade and barricade.ById[pointId]
     if not window or (requestedActor and requestedActor ~= window.Actor) then return false, 'UNKNOWN_WINDOW' end
     if window.Installer == nil or window.Installer ~= playerKey then return false, 'NOT_INSTALLING' end
-    if not Engine.InstallEligible(self.Context, playerKey, window.Actor, window.Config.InstallRange) then
+    local pawn = Engine.InstallEligible(self.Context, playerKey, window.Actor, window.Config.InstallRange)
+    if not pawn then
         self:BoardPlayerLeft(encounterId, playerKey)
         return false, 'INSTALLER_INELIGIBLE'
     end
-    local ok, result = barricade:CompleteInstall(pointId, playerKey)
+    local ok, result = barricade:CompleteInstall(pointId, playerKey, function()
+        local itemId = self.Catalog.BoardItemId
+        if pawn.EscapeXGMFreeSupplies then return UGCBackPackSystem.GetItemCount(pawn, itemId) > 0 end
+        for _, item in pairs(UGCBackPackSystem.GetAllItemData(pawn)) do
+            if item.ItemID == itemId and item.Count > 0 then
+                return UGCBackPackSystem.DropItemByInstanceID(pawn, item.InstanceID, 1, true)
+            end
+        end
+        return false
+    end)
     if ok then
         publishBoardSlots(window, table.concat(window.VisualSlots, ','))
         local run = self.Runs[encounterId]
@@ -482,21 +497,27 @@ function Service:ReportError(encounterId, code)
     return true
 end
 
-function Service:Shutdown()
+function Service:Shutdown(resetForGM)
     if self.Closed then return end
+    self.Closed = true
     for _, run in pairs(self.Runs) do
         stopWindowCombat(run)
-        for _, actor in pairs(run.Actors) do Engine.Release(actor) end
+        for _, actor in pairs(run.Actors) do
+            Engine.Release(actor)
+            if resetForGM and KismetSystemLibrary.IsValid(actor) then actor:K2_DestroyActor() end
+        end
         encounterOwners[run.StartPoint] = nil
+        if resetForGM and KismetSystemLibrary.IsValid(run.StartPoint) then
+            run.StartPoint.DefenseStarted = false
+            run.StartPoint.DefenseStatusText = ''
+        end
     end
     for _, barricade in pairs(self.Barricades) do
         barricade:InterruptAll()
         for _, window in ipairs(barricade.List) do publishBoardSlots(window, '') end
         publishBoardInteraction(barricade, false)
     end
-    self.Closed = true
     active[self.Context] = nil
-    -- No kill/destroy: shutdown is not a combat death or a victory condition.
 end
 
 return Service

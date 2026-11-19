@@ -1,4 +1,5 @@
 -- Shared operations for BT_HeadTeacher. Scheduling belongs exclusively to the BT.
+local GMState = UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMPlayerState')
 local M = {}
 M.Defaults = {
     HTViewDistance = 1000, HTViewFullAngle = 60, HTCatchDistance = 30,
@@ -105,6 +106,7 @@ end
 
 function M.aliveWhy(target)
     if not M.valid(target) then return "invalid" end
+    if GMState.IsInvisible(target) then return "gm_invisible" end
     local key = UGCGameSystem.GetPlayerKeyByPlayerPawn(target)
     if key == -1 then return "nokey", key end
     local health = UGCAttributeSystem.GetGameAttributeValue(target, "Health")
