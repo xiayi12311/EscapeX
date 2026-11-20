@@ -17,8 +17,6 @@
 ---@field Cube UStaticMeshComponent
 ---@field ActorSequence UActorSequenceComponent
 ---@field SkeletalMesh USkeletalMeshComponent
----@field StaticMesh UStaticMeshComponent
----@field STCustomMesh USTCustomMeshComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
 ---@type Run_C
