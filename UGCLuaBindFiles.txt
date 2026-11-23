@@ -23,6 +23,7 @@ Script/Blueprint/Prefabs/Items/object/key2.lua
 Script/Blueprint/Prefabs/Items/object/paper1.lua
 Script/Blueprint/Prefabs/Items/object/paper2.lua
 Script/Blueprint/Prefabs/Monsters/BP_BossBreakPoint.lua
+Script/Blueprint/Prefabs/Monsters/BP_BossWeakPoint.lua
 Script/Blueprint/Prefabs/Monsters/NormalZombie.lua
 Script/Blueprint/Prefabs/Monsters/TheHeadTeacher.lua
 Script/Blueprint/Prefabs/Monsters/TheHeadTeacherMutated.lua
@@ -60,6 +61,7 @@ Script/Gameplay/Capture/CapturePresentation.lua
 Script/Gameplay/Capture/CaptureService.lua
 Script/Gameplay/Capture/StrugglePresentation.lua
 Script/Gameplay/Debug/GMFlight.lua
+Script/Gameplay/Debug/GMInventory.lua
 Script/Gameplay/Debug/GMPlayerState.lua
 Script/Gameplay/Desk/DeskOutcomeConfig.lua
 Script/Gameplay/Desk/DeskPresentation.lua

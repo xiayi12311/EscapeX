@@ -1,7 +1,5 @@
 -- Server-owned perspective setup for player login and respawn.
 local M={}
--- Temporary testing switch: set false to restore forced first person.
-local TEST_THIRD_PERSON=true
 local timers={}
 local localOwner=nil
 local localTimer=nil
@@ -25,7 +23,7 @@ function M.Schedule(controller)
         local pawn=UGCGameSystem.GetPlayerPawnByPlayerController(controller)
         if pawn and KismetSystemLibrary.IsValid(pawn) then
             M.Cancel(controller)
-            local ok=UGCPlayerPawnSystem.SetIsFPP(pawn,not TEST_THIRD_PERSON,true)
+            local ok=UGCPlayerPawnSystem.SetIsFPP(pawn,true,true)
             ugcprint('[FirstPerson] set player='..tostring(controller.PlayerKey)..' accepted='..tostring(ok))
         elseif attempts>=50 then
             M.Cancel(controller)
@@ -40,7 +38,6 @@ end
 
 -- The local controller persists through respawns; each replacement pawn needs its own lock.
 function M.MonitorLocal(controller)
-    if TEST_THIRD_PERSON then return false end
     if controller~=UGCGameSystem.GetLocalPlayerController() or localTimer then return false end
     localOwner=controller
     localTimer=UGCTimerUtility.CreateLuaTimer(0.2,function()

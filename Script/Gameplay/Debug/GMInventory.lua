@@ -1,5 +1,4 @@
 local Inventory = {}
-local CapacityAttribute = 'PawnBackpackCapacity'
 local CapacityBonus = 100000
 local WeaponCheckSeconds = 0.1
 
@@ -66,16 +65,22 @@ function Inventory.SetFreeSupplies(pawn, enable)
     return true
 end
 
-function Inventory.SetCapacityBonus(pawn, enable)
-    local before = UGCAttributeSystem.GetGameAttributeValue(pawn, CapacityAttribute)
+function Inventory.SetCapacityBonus(pawn, enable, controller)
+    if enable == (pawn.EscapeXGMCapacityBonus ~= nil) then return true end
+    local manager = controller.CheatManager
+    if not valid(manager) or not manager.GMSetBackpackCapacity then
+        ugcprint('[EscapeX GM] Native backpack capacity command is unavailable')
+        return false
+    end
+
+    local before = UGCBackPackSystem.GetMaxCapacity(pawn)
     if type(before) ~= 'number' then return false end
     local bonus = enable and CapacityBonus or -pawn.EscapeXGMCapacityBonus
-    local oldMax = UGCBackPackSystem.GetMaxCapacity(pawn)
-    if type(oldMax) ~= 'number' then return false end
-    UGCAttributeSystem.SetGameAttributeValue(pawn, CapacityAttribute, before + bonus)
-    local newMax = UGCBackPackSystem.GetMaxCapacity(pawn)
-    if type(newMax) ~= 'number' or (newMax - oldMax) * bonus <= 0 then
-        UGCAttributeSystem.SetGameAttributeValue(pawn, CapacityAttribute, before)
+    local expected = before + bonus
+    manager:GMSetBackpackCapacity(expected)
+    local actual = UGCBackPackSystem.GetMaxCapacity(pawn)
+    if type(actual) ~= 'number' or math.abs(actual - expected) > 0.01 then
+        if actual ~= before then manager:GMSetBackpackCapacity(before) end
         ugcprint('[EscapeX GM] Backpack capacity did not update')
         return false
     end
