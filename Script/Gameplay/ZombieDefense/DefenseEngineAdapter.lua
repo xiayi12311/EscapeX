@@ -268,6 +268,17 @@ function Adapter.Spawn(context, plan, onDeath)
     return actor
 end
 
+function Adapter.SpawnBoss(context, plan, onDeath)
+    Adapter.ValidateContext(context)
+    local point = plan.Point
+    if not KismetSystemLibrary.IsValid(point) then return nil, 'BOSS_SPAWN_POINT_UNAVAILABLE' end
+    local actor = UGCGenericCharacterSystem.SpawnGenericCharacter(context, plan.Class,
+        point:K2_GetActorLocation(), point:K2_GetActorRotation())
+    if not KismetSystemLibrary.IsValid(actor) then return nil, 'BOSS_SPAWN_FAILED' end
+    bindings[actor] = {Context = context, OnDeath = onDeath}
+    return actor
+end
+
 function Adapter.NotifyDeath(actor)
     if not actor:HasAuthority() then return false, 'DEFENSE_SERVER_ONLY' end
     local binding = bindings[actor]

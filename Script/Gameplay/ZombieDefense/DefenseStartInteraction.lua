@@ -14,6 +14,10 @@ end
 -- defect the map author must fix, not a player mistake.
 local Message = {
     DRIVER_DISABLED = '当前地图未开启自动波次',
+    BOSS_SPAWN_POINT_INVALID = 'Boss 出生点缺失或重复',
+    BOSS_SPAWN_POINT_UNAVAILABLE = 'Boss 出生点不可用',
+    BOSS_CLASS_UNAVAILABLE = 'Boss 资源加载失败',
+    BOSS_SPAWN_FAILED = 'Boss 生成失败',
     INVALID_PLAYER_COUNT = '参战人数不合法',
     PARTICIPANT_NOT_ALIVE = '有队友当前不在存活状态',
     PARTICIPANT_COUNT_CHANGED = '参战人数在启动时发生变化',

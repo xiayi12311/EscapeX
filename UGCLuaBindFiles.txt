@@ -22,13 +22,18 @@ Script/Blueprint/Prefabs/Items/object/key1.lua
 Script/Blueprint/Prefabs/Items/object/key2.lua
 Script/Blueprint/Prefabs/Items/object/paper1.lua
 Script/Blueprint/Prefabs/Items/object/paper2.lua
+Script/Blueprint/Prefabs/Monsters/BP_BossBreakPoint.lua
+Script/Blueprint/Prefabs/Monsters/BP_BossWeakPoint.lua
 Script/Blueprint/Prefabs/Monsters/NormalZombie.lua
 Script/Blueprint/Prefabs/Monsters/TheHeadTeacher.lua
+Script/Blueprint/Prefabs/Monsters/TheHeadTeacherMutated.lua
 Script/Blueprint/Prefabs/Monsters/Zombie.lua
 Script/Blueprint/Prefabs/Projectiles/ZombieBossProj.lua
 Script/Blueprint/Prefabs/Skills/Blueprint/Prefabs/Skills/HTDetectSkill.lua
 Script/Blueprint/Prefabs/Skills/testskill.lua
 Script/Blueprint/Prefabs/Skills/ZombieBossSkill_1.lua
+Script/Blueprint/Prefabs/Skills/ZombieBossWeakness.lua
+Script/Blueprint/Prefabs/Skills/ZombieBossWeaknessLight.lua
 Script/Blueprint/Prefabs/Skills/ZS_BoardClaw.lua
 Script/Blueprint/Prefabs/Skills/ZS_PoliceWindowVault.lua
 Script/Blueprint/Prefabs/Skills/ZS_WindowVault.lua
@@ -56,6 +61,7 @@ Script/Gameplay/Capture/CapturePresentation.lua
 Script/Gameplay/Capture/CaptureService.lua
 Script/Gameplay/Capture/StrugglePresentation.lua
 Script/Gameplay/Debug/GMFlight.lua
+Script/Gameplay/Debug/GMInventory.lua
 Script/Gameplay/Debug/GMPlayerState.lua
 Script/Gameplay/Desk/DeskOutcomeConfig.lua
 Script/Gameplay/Desk/DeskPresentation.lua
@@ -74,6 +80,8 @@ Script/Gameplay/PushPull/PushPullManager.lua
 Script/Gameplay/PushPull/PushPullPresentation.lua
 Script/Gameplay/PushPull/PushPullService.lua
 Script/Gameplay/StartSequence.lua
+Script/Gameplay/ZombieDefense/BossBreakAim.lua
+Script/Gameplay/ZombieDefense/BossWeaknessSkill.lua
 Script/Gameplay/ZombieDefense/DefenseBarricade.lua
 Script/Gameplay/ZombieDefense/DefenseBoardFocus.lua
 Script/Gameplay/ZombieDefense/DefenseBoardInteraction.lua

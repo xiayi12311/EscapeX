@@ -106,7 +106,7 @@ function GM:S_ToggleBackpack(_, controller)
     if not pawn then return end
     local inventory = UGCGameSystem.UGCRequire('Script.Gameplay.Debug.GMInventory')
     local enabled = pawn.EscapeXGMCapacityBonus == nil
-    report(controller, '背包高容量', enabled, inventory.SetCapacityBonus(pawn, enabled))
+    report(controller, '背包高容量', enabled, inventory.SetCapacityBonus(pawn, enabled, controller))
 end
 
 function GM:S_ToggleShop(_, controller)

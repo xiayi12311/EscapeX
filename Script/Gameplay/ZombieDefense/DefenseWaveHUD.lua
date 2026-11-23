@@ -1,10 +1,31 @@
--- Local-controller owned screen HUD; replicated point text is presentation data only.
+-- Local-controller owned screen HUD for wave status and Boss health.
 local World = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWorldPoints')
+local Catalog = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseCatalog')
 local M = {}
 M.Config = {WidgetClassPath='Asset/UI/ZombieSurvival/WBP_ZS_StatusHUD.WBP_ZS_StatusHUD_C',
     RefreshSeconds=0.2, ZOrder=15}
 local current
 local function valid(o) return o and KismetSystemLibrary.IsValid(o) end
+local function bossHealthPercent(c)
+    local boss = c.boss
+    if not valid(boss) or not UGCGenericCharacterSystem.IsAlive(boss) then
+        c.boss = nil
+        for _, actor in ipairs(UGCActorComponentUtility.GetAllActorsOfClass(c.pc, c.bossClass)) do
+            if valid(actor) and UGCGenericCharacterSystem.IsAlive(actor) then
+                c.boss = actor
+                break
+            end
+        end
+        boss = c.boss
+    end
+    if not boss then return nil end
+
+    local health = UGCGenericCharacterSystem.GetHealth(boss)
+    local maxHealth = UGCGenericCharacterSystem.GetHealthMax(boss)
+    if health <= 0 or maxHealth <= 0 then return nil end
+    return math.min(1, health / maxHealth)
+end
+
 function M.Update()
     local c = current
     if not c or not valid(c.widget) then return end
@@ -20,14 +41,23 @@ function M.Update()
     for _, row in ipairs(rows) do lines[#lines+1] = row.text end
     local text = table.concat(lines,'\n')
     if text ~= c.text then c.widget:SetStatus(text);c.text = text end
-    c.widget:SetVisibility(text ~= '' and ESlateVisibility.HitTestInvisible or ESlateVisibility.Collapsed)
+    local bossPercent = bossHealthPercent(c)
+    if bossPercent ~= c.bossPercent then
+        c.widget:SetBossHealth(bossPercent)
+        c.bossPercent = bossPercent
+    end
+    c.widget:SetVisibility((text ~= '' or bossPercent ~= nil)
+        and ESlateVisibility.HitTestInvisible or ESlateVisibility.Collapsed)
 end
 function M.Begin(pc)
     if pc ~= UGCGameSystem.GetLocalPlayerController() then return false end
     if current then M.End() end
     local class = UE.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(World.Classes.Start))
     if not class then ugcprint('[ZombieHUD] start class unavailable');return false end
-    local c = {pc=pc,class=class}
+    local bossPath = Catalog.BossEncounters.DefenseMainTest.ClassPath
+    local bossClass = UE.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(bossPath))
+    assert(bossClass, '[ZombieHUD] Boss class unavailable')
+    local c = {pc=pc,class=class,bossClass=bossClass}
     current = c
     UGCWidgetUtility.CreateWidgetAsync(UGCGameSystem.GetUGCResourcesFullPath(M.Config.WidgetClassPath),function(widget)
         if current ~= c then
