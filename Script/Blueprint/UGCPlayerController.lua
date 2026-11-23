@@ -21,6 +21,7 @@ local ZombieBoardFocus=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.D
 local ZombieWaveHUD=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseWaveHUD')
 local Shop = UGCGameSystem.UGCRequire('Script.utils.HospitalShopService')
 local ShopPresentation = UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.DefenseShopPresentation')
+local BossBreakAim=UGCGameSystem.UGCRequire('Script.Gameplay.ZombieDefense.BossBreakAim')
 local PlayerController={}
 
 -- The controller is the stable local-session owner: pawns are replaced on respawn, so the
@@ -61,7 +62,13 @@ function PlayerController:GetAvailableServerRPCs()
         'ServerOpenDefenseShop', 'ClientOpenDefenseShop', 'ClientDefenseShopDenied', 'RPC_Server_RequestHospitalShopState',
         'RPC_Server_BuyCommodity', 'RPC_Server_RefreshHospitalShop', 'RPC_Server_LockHospitalShop',
         'RPC_Client_HospitalShopState',
-        'ServerRequestZombieBoard', 'ServerCompleteZombieBoard', 'ServerCancelZombieBoard', 'ClientZombieBoardResult'
+        'ServerRequestZombieBoard', 'ServerCompleteZombieBoard', 'ServerCancelZombieBoard', 'ClientZombieBoardResult',
+        'ServerRequestBossBreakShot'
+end
+
+function PlayerController:ServerRequestBossBreakShot(point, weapon, shotId, x, y, z, dx, dy, dz, cx, cy, cz)
+    if not self:HasAuthority() then return end
+    BossBreakAim.ResolveShot(self,point,weapon,shotId,{X=x,Y=y,Z=z},{X=dx,Y=dy,Z=dz},{X=cx,Y=cy,Z=cz})
 end
 
 function PlayerController:ServerOpenDefenseShop(point)

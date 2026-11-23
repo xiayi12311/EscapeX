@@ -31,7 +31,8 @@ local function publish(point, snapshot, reason, now)
         text = '下一波 '..math.max(0,math.ceil(snapshot.ReadyAt-now))..'秒'
     elseif snapshot.State == 'Fighting' then
         text = '第'..snapshot.WaveIndex..'/'..snapshot.WaveCount..'波 存活'..snapshot.AliveCount
-    elseif snapshot.State == 'Succeeded' then text = '全部波次完成'
+    elseif snapshot.State == 'Succeeded' then
+        text = snapshot.BossState == 'Active' and '变异班主任已出现' or '全部波次完成'
     elseif snapshot.State == 'Failed' then text = '已失败' end
     point.DefenseStatusText = text or snapshot.State
 end

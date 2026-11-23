@@ -4,6 +4,13 @@ local targeting = {RepathSeconds = 0.6, WindowStopRadius = 5}
 return {
     Modes = {Prototype = Config},
     BoardItemId = 8310006,
+    BossEncounters = {
+        DefenseMainTest = {
+            Level = 'UGCmap',
+            SpawnTag = 'EscapeX.DefenseBossSpawn',
+            ClassPath = 'Asset/Blueprint/Prefabs/Monsters/TheHeadTeacherMutated.TheHeadTeacherMutated_C',
+        },
+    },
     SpawnGroups = {Default = {}},
     Enemies = {NormalZombie = {
         ClassPath = 'Asset/Blueprint/Prefabs/Monsters/NormalZombie.NormalZombie_C',

@@ -59,6 +59,36 @@ function Service:_check()
     Engine.ValidateContext(self.Context)
 end
 
+local function prepareBoss(context, config)
+    if not config or UGCGameSystem.GetCurrentLevel(context, true) ~= config.Level then return end
+    local points = UGCActorComponentUtility.GetAllActorsWithTag(context, config.SpawnTag)
+    if type(points) ~= 'table' or #points ~= 1 or not KismetSystemLibrary.IsValid(points[1]) then
+        return nil, 'BOSS_SPAWN_POINT_INVALID'
+    end
+    local class = UGCObjectUtility.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(config.ClassPath))
+    if not class then return nil, 'BOSS_CLASS_UNAVAILABLE' end
+    return {Point = points[1], Class = class}
+end
+
+local function spawnBoss(context, run)
+    if not run.BossPlan or run.BossState then return end
+    run.BossState = 'Spawning'
+    local actor, reason = Engine.SpawnBoss(context, run.BossPlan, function(defeated)
+        if run.Boss ~= defeated or run.BossState ~= 'Active' then return end
+        run.BossState = 'Defeated'
+        if KismetSystemLibrary.IsValid(run.StartPoint) then
+            run.StartPoint.DefenseStatusText = '变异班主任已击败'
+        end
+    end)
+    if not actor then
+        run.BossState = 'SpawnFailed'
+        run.Error = reason
+        return
+    end
+    run.Boss = actor
+    run.BossState = 'Active'
+end
+
 function Service:Start(encounterId, instanceId, playerCount, now)
     self:_check()
     if self.Runs[encounterId] then return false, 'ENCOUNTER_ALREADY_STARTED' end
@@ -109,11 +139,15 @@ function Service:Start(encounterId, instanceId, playerCount, now)
             end
         end
     end
+    local bossConfig = self.Catalog.BossEncounters and self.Catalog.BossEncounters[encounterId]
+    local bossPlan, bossError = prepareBoss(self.Context, bossConfig)
+    if bossError then return false, bossError end
     session:Start(now)
     if barricade then barricade.Assault = assault end
     self.Runs[encounterId] = {Session = session, Plans = plans, Deaths = {}, Actors = {},
         Cursor = 0, Error = nil, StartPoint = start, Deferred = {}, RetryAt = 0,
-        Barricade = barricade, BoardAttack = boardAttack, Vaults = vaults, Targeting = targeting}
+        Barricade = barricade, BoardAttack = boardAttack, Vaults = vaults, Targeting = targeting,
+        BossPlan = bossPlan}
     publishBoardInteraction(barricade, true)
     encounterOwners[start] = self
     self.UsedInstances[instanceId] = true
@@ -308,7 +342,8 @@ function Service:Step(encounterId, now, teamFailed, deferVictory)
     if state == 'Succeeded' or state == 'Failed' then
         stopWindowCombat(run)
         for _, actor in pairs(run.Actors) do Engine.Release(actor) end
-        return self:Snapshot(encounterId)
+        if state == 'Succeeded' then spawnBoss(self.Context, run) end
+        return self:Snapshot(encounterId), run.Error
     end
     if session.Error then
         stopWindowCombat(run)
@@ -346,6 +381,7 @@ function Service:Snapshot(encounterId)
     if not run then return nil, 'ENCOUNTER_NOT_STARTED' end
     local snapshot = run.Session:Snapshot()
     snapshot.AdapterError = run.Error
+    snapshot.BossState = run.BossState
     if run.Barricade then
         local boards = run.Barricade:Summary()
         snapshot.Boards = boards.Boards
@@ -505,6 +541,10 @@ function Service:Shutdown(resetForGM)
         for _, actor in pairs(run.Actors) do
             Engine.Release(actor)
             if resetForGM and KismetSystemLibrary.IsValid(actor) then actor:K2_DestroyActor() end
+        end
+        if KismetSystemLibrary.IsValid(run.Boss) then
+            Engine.Release(run.Boss)
+            if resetForGM then run.Boss:K2_DestroyActor() end
         end
         encounterOwners[run.StartPoint] = nil
         if resetForGM and KismetSystemLibrary.IsValid(run.StartPoint) then
